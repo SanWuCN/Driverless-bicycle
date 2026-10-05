@@ -1,0 +1,107 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "STM32: Configure",
+      "type": "shell",
+      "command": "cmake --preset mac-debug",
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Build",
+      "type": "shell",
+      "command": "cmake --build --preset mac-debug",
+      "group": { "kind": "build", "isDefault": true },
+      "dependsOn": "STM32: Configure",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "STM32: Probe ST-Link",
+      "type": "shell",
+      "command": "${env:HOME}/.local/bin/st-info",
+      "args": ["--probe", "--freq=1000"],
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Flash ST-Link",
+      "type": "shell",
+      "command": "${env:HOME}/.local/bin/st-flash",
+      "args": [
+        "--freq", "1000",
+        "--reset",
+        "write", "build/debug/bike.bin", "0x08000000"
+      ],
+      "dependsOn": "STM32: Build",
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: List DFU Devices",
+      "type": "shell",
+      "command": "dfu-util -l",
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Configure UART7 Diagnostic",
+      "type": "shell",
+      "command": "cmake --preset mac-uart-diagnostic",
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Build UART7 Diagnostic",
+      "type": "shell",
+      "command": "cmake --build --preset mac-uart-diagnostic",
+      "dependsOn": "STM32: Configure UART7 Diagnostic",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "STM32: Flash DFU",
+      "type": "shell",
+      "command": "dfu-util -a 0 -s 0x08000000:leave -D build/debug/bike.bin",
+      "dependsOn": "STM32: Build",
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Flash DFU UART7 Diagnostic",
+      "type": "shell",
+      "command": "dfu-util -a 0 -s 0x08000000:leave -D build/uart-diagnostic/bike.bin",
+      "dependsOn": "STM32: Build UART7 Diagnostic",
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Test UART7 Echo",
+      "type": "shell",
+      "command": "python3",
+      "args": ["tools/uart_echo_test.py", "${input:serialPort}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Monitor Balance Telemetry",
+      "type": "shell",
+      "command": "python3",
+      "args": ["tools/balance_telemetry.py", "${input:serialPort}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "STM32: Flash ROM over USART3 (not UART7)",
+      "type": "shell",
+      "command": "${env:HOME}/.local/bin/stm32flash",
+      "args": [
+        "-b", "115200",
+        "-w", "build/debug/bike.bin",
+        "-v",
+        "-g", "0x0",
+        "${input:serialPort}"
+      ],
+      "dependsOn": "STM32: Build",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "serialPort",
+      "type": "promptString",
+      "description": "macOS serial device",
+      "default": "/dev/cu.usbserial-1140"
+    }
+  ]
+}

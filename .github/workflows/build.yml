@@ -1,0 +1,31 @@
+name: firmware-build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  arm-gcc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+
+      - name: Configure
+        run: cmake --preset mac-debug
+
+      - name: Build
+        run: cmake --build --preset mac-debug
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bike-firmware
+          path: |
+            build/debug/bike.elf
+            build/debug/bike.hex
+            build/debug/bike.bin
+            build/debug/bike.map

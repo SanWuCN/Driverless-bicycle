@@ -1,0 +1,92 @@
+odrivetool restore-config c:\config_8192cpr_20PP.json
+
+odrivetool
+
+//初始化
+
+
+
+//输入参数
+odrv0.config.brake_resistance = 2
+odrv0.config.dc_bus_overvoltage_trip_level = 56
+odrv0.config.dc_max_positive_current = 120
+odrv0.config.dc_max_negative_current = -30
+
+odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_HIGH_CURRENT
+odrv0.axis0.motor.config.pole_pairs = 14
+odrv0.axis0.motor.config.calibration_current = 10
+odrv0.axis0.motor.config.current_lim = 120
+odrv0.axis0.motor.config.current_lim_margin = 8
+odrv0.axis0.encoder.config.mode = ENCODER_MODE_INCREMENTAL
+odrv0.axis0.encoder.config.cpr = 8192
+odrv0.axis0.controller.config.control_mode = CONTROL_MODE_VELOCITY_CONTROL
+odrv0.axis0.controller.config.vel_limit = 50
+odrv0.axis0.controller.config.vel_limit_tolerance = 2
+odrv0.axis0.controller.config.vel_gain = 0.15
+odrv0.axis0.controller.config.vel_integrator_gain = 0.2
+odrv0.axis0.controller.config.input_mode = INPUT_MODE_VEL_RAMP
+odrv0.axis0.controller.config.vel_ramp_rate = 50
+
+odrv0.axis1.motor.config.motor_type = MOTOR_TYPE_HIGH_CURRENT
+odrv0.axis1.motor.config.pole_pairs = 14
+odrv0.axis1.motor.config.calibration_current = 10
+odrv0.axis1.motor.config.current_lim = 120
+odrv0.axis1.motor.config.current_lim_margin = 8
+odrv0.axis1.encoder.config.mode = ENCODER_MODE_INCREMENTAL
+odrv0.axis1.encoder.config.cpr = 8192
+odrv0.axis1.controller.config.control_mode = CONTROL_MODE_VELOCITY_CONTROL
+odrv0.axis1.controller.config.vel_limit = 50
+odrv0.axis1.controller.config.vel_limit_tolerance = 2
+odrv0.axis1.controller.config.vel_gain = 0.2
+odrv0.axis1.controller.config.vel_integrator_gain = 0.2
+odrv0.axis1.controller.config.input_mode = INPUT_MODE_VEL_RAMP
+odrv0.axis1.controller.config.vel_ramp_rate = 50
+
+
+odrv0.axis0.config.can.node_id =24
+odrv0.axis1.config.can.node_id =16
+odrv0.can.config.baud_rate = 250000
+
+odrv0.axis0.requested_state = AXIS_STATE_IDLE
+odrv0.axis1.requested_state = AXIS_STATE_IDLE
+
+//保存重启
+odrv0.save_configuration()
+odrv0.reboot()
+
+odrv0.axis0.requested_state = AXIS_STATE_FULL_CALIBRATION_SEQUENCE
+odrv0.axis0.error
+odrv0.axis0.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+odrv0.axis0.motor.config.pre_calibrated = True
+odrv0.axis0.config.startup_encoder_offset_calibration = True
+odrv0.axis0.config.startup_closed_loop_control = True
+
+odrv0.axis1.requested_state = AXIS_STATE_FULL_CALIBRATION_SEQUENCE
+odrv0.axis1.error
+odrv0.axis1.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+odrv0.axis1.motor.config.pre_calibrated = True
+odrv0.axis1.config.startup_encoder_offset_calibration = True
+odrv0.axis1.config.startup_closed_loop_control = True
+
+odrv0.axis0.requested_state = AXIS_STATE_IDLE
+odrv0.axis1.requested_state = AXIS_STATE_IDLE
+odrv0.save_configuration()
+
+odrv0.reboot()
+
+odrv0.config.enable_uart_a=True
+odrv0.config.uart_a_baudrate=460800
+
+
+odrv0.config.enable_uart=True
+odrv0.config.uart_baudrate=460800
+
+odrv0.axis0.controller.input_vel = 10
+odrv0.axis1.controller.input_vel = 10
+************************************************************************************
+odrv0.axis0.requested_state = AXIS_STATE_IDLE
+odrv0.axis1.requested_state = AXIS_STATE_IDLE
+。要将配置以文件的形式保存到PC上，系统命令终端中执行odrivetool backup-config my_config.json Enter
+
+# 清华大学镜像
+pip3 install odrive==0.6.9.post0 -i https://pypi.tuna.tsinghua.edu.cn/simple

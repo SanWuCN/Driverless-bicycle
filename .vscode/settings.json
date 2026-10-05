@@ -1,0 +1,6 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": false,
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/debug/compile_commands.json",
+  "files.autoGuessEncoding": true
+}

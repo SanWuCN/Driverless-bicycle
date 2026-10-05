@@ -1,0 +1,42 @@
+build/
+logs/
+.DS_Store
+
+# Python runtime files
+__pycache__/
+*.py[cod]
+
+# Editors and local user state
+.idea/
+*.code-workspace
+MDK-ARM/*.uvguix.*
+MDK-ARM/JLinkLog.txt
+MDK-ARM/JLinkSettings.ini
+MDK-ARM/DebugConfig/
+
+# Keil build output. Keep the shared project at MDK-ARM/*.uvprojx;
+# *.uvoptx contains local debugger serial numbers, watches and window state.
+MDK-ARM/*.uvoptx
+MDK-ARM/bike/
+MDK-ARM/*.lst
+
+# Common embedded build products outside the configured build directory
+*.axf
+*.elf
+*.o
+*.d
+*.crf
+*.map
+*.lnp
+*.dep
+*.hex
+*.bin
+*.build_log.htm
+
+# macOS serial monitor leftovers
+*.log
+
+# Unused prebuilt CMSIS DSP libraries and example sources. The firmware only
+# needs CMSIS core/device headers, all of which remain versioned.
+Drivers/CMSIS/Lib/
+Drivers/CMSIS/DSP_Lib/

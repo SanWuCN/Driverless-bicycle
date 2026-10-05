@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "mac-debug",
+      "displayName": "Mac Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "mac-uart-diagnostic",
+      "displayName": "Mac UART7 Echo Diagnostic",
+      "inherits": "mac-debug",
+      "binaryDir": "${sourceDir}/build/uart-diagnostic",
+      "cacheVariables": {
+        "BIKE_UART7_ECHO": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "mac-debug",
+      "configurePreset": "mac-debug"
+    },
+    {
+      "name": "mac-uart-diagnostic",
+      "configurePreset": "mac-uart-diagnostic"
+    }
+  ]
+}
