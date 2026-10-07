@@ -1,36 +1,44 @@
 #include "servo.h"
-#define PWM_RESOLUTION 10000
+#include "steering.h"
+
 HAL_StatusTypeDef servo_status;
 
-#define Servo_Center_Mid 780                     //舵机直行中值
-#define Servo_Left_Max (Servo_Center_Mid + 200)  //舵机左转极限值
-#define Servo_Right_Min (Servo_Center_Mid - 200) //舵机右转极限值
-inline static void set_pwm_duty(float duty);
+static int current_pulse_us;
 
 void servo_init(void)
 {
 	MX_TIM2_Init(); //PWM OUTPUT
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3); //PA0
-	//servo_set_duty(0);
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3); // PA2 / TIM2_CH3
+	steering_init();
 }
 
 void servo_set_duty(int duty)
 {
-    int target = Servo_Center_Mid + duty;
-    target = target > Servo_Left_Max ? Servo_Left_Max : target;
-    target = target < Servo_Right_Min ? Servo_Right_Min : target;
-    float res = (float)target / 10000;
-    set_pwm_duty(res);
+    int target = SERVO_CENTER_PULSE_US + duty;
+    target = target > SERVO_MAX_PULSE_US ? SERVO_MAX_PULSE_US : target;
+    target = target < SERVO_MIN_PULSE_US ? SERVO_MIN_PULSE_US : target;
+    servo_set_pulse_us(target);
 }
 
-inline static void set_pwm_duty(float duty){
-	duty > 1 ? duty = PWM_RESOLUTION : duty;
-	duty < 0 ? duty = 0 : duty;
-//	__HAL_TIM_SetCompare(&htim2,TIM_CHANNEL_1,duty);
-//	PWM_SetDuty(&htim2,TIM_CHANNEL_1,duty); //PA 0
-//	PWM_SetDuty(&htim2,TIM_CHANNEL_2,duty); //PA 1
-	PWM_SetDuty(&htim2,TIM_CHANNEL_3,duty); //PA 2
-//	PWM_SetDuty(&htim2,TIM_CHANNEL_4,duty); //PA 3
+void servo_set_pulse_us(int pulse_us)
+{
+    if (pulse_us < SERVO_MIN_PULSE_US)
+        pulse_us = SERVO_MIN_PULSE_US;
+    if (pulse_us > SERVO_MAX_PULSE_US)
+        pulse_us = SERVO_MAX_PULSE_US;
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, (uint32_t)pulse_us);
+    current_pulse_us = pulse_us;
+}
+
+void servo_disable(void)
+{
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0u);
+    current_pulse_us = 0;
+}
+
+int servo_current_pulse_us(void)
+{
+    return current_pulse_us;
 }
 //速度限幅
 int Steer_Speed_Limit(int now, int last, int limit, int times)

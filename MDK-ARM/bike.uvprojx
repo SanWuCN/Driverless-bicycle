@@ -338,7 +338,7 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls>-fno-ms-extensions -Wno-packed -Wno-missing-declarations -Wno-missing-prototypes -D__packed="__attribute__((packed))" -D__align(x)="__attribute__((aligned(x)))"</MiscControls>
-              <Define>USE_HAL_DRIVER,STM32F427xx,USE_FULL_LL_DRIVER</Define>
+              <Define>USE_HAL_DRIVER,STM32F427xx,USE_FULL_LL_DRIVER,HSE_VALUE=12000000U</Define>
               <Undefine></Undefine>
               <IncludePath>../Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include</IncludePath>
             </VariousControls>
@@ -493,6 +493,11 @@
               <FileName>balance_monitor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\balance_monitor.c</FilePath>
+            </File>
+            <File>
+              <FileName>drive_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\drive_control.c</FilePath>
             </File>
             <File>
               <FileName>uart7_bridge.c</FileName>

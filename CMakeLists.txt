@@ -7,8 +7,8 @@ option(BIKE_UART7_ECHO "Echo UART7 bytes for a physical-link diagnostic" OFF)
 
 set(APP_SOURCES
     Src/balance_monitor.c Src/can.c Src/fonts.c Src/gpio.c Src/i2c.c Src/imu.c
-    Src/imu_data_decode.c Src/key.c Src/main.c Src/odrive.c Src/oled.c
-    Src/packet.c Src/servo.c Src/ssd1306.c Src/stm32f4xx_hal_msp.c
+    Src/drive_control.c Src/imu_data_decode.c Src/key.c Src/main.c Src/odrive.c Src/oled.c
+    Src/packet.c Src/servo.c Src/steering.c Src/ssd1306.c Src/stm32f4xx_hal_msp.c
     Src/stm32f4xx_it.c Src/system_stm32f4xx.c Src/task.c Src/tim.c
     Src/upper.c Src/uart7_bridge.c Src/usart.c Src/zero_persistence.c
 )
@@ -51,7 +51,7 @@ target_include_directories(bike PRIVATE
 )
 
 target_compile_definitions(bike PRIVATE
-    USE_HAL_DRIVER STM32F427xx USE_FULL_LL_DRIVER
+    USE_HAL_DRIVER STM32F427xx USE_FULL_LL_DRIVER HSE_VALUE=12000000U
     __packed=__attribute__\(\(packed\)\)
     $<$<BOOL:${BIKE_UART7_ECHO}>:BIKE_UART7_ECHO=1>
 )

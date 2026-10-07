@@ -55,7 +55,7 @@
 | `cmake/` | Arm GCC 工具链与链接脚本 |
 | `.vscode/` | VS Code 推荐扩展和任务 |
 | `MDK-ARM/` | Keil 工程入口；编译产物不再纳入版本控制 |
-| `tools/` | UART7 回环测试和在线遥测记录脚本 |
+| `tools/` | UART7/ODrive 遥测、在线调参脚本与本地 Web 上位机 |
 | `hardware/` | 厂家配置参考、实拍和注意事项 |
 | `docs/` | 硬件、接口、控制、开发环境与项目状态说明 |
 
@@ -64,6 +64,8 @@
 - [硬件与电气说明](docs/HARDWARE.md)
 - [引脚、总线与协议接口](docs/INTERFACES.md)
 - [平衡控制、动态零点与遥测](docs/CONTROL_AND_TELEMETRY.md)
+- [UART7 无线串口配置](hardware/WIRELESS_UART7.md)
+- [Web 上位机与 PID 在线调参](docs/WEB_CONTROL_STATION.md)
 - [开发、编译、烧录与调试环境](docs/DEVELOPMENT.md)
 - [项目状态、已知风险与路线图](docs/STATUS.md)
 - [macOS 与 VS Code 实操记录](docs/MAC_VSCODE.md)
@@ -138,6 +140,20 @@ python3 tools/balance_telemetry.py /dev/cu.usbserial-120
 ```
 
 日志写入 `logs/balance_YYYYMMDD_HHMMSS.csv`，该目录不会提交到 Git。
+
+需要连续调参和查看同步曲线时，macOS 双击项目根目录的
+`launch_control_station.command`，Windows 双击 `launch_control_station.bat`。
+首次运行会创建独立 Python 环境并安装依赖，之后会自动打开本地网页。
+也可以手动启动：
+
+```bash
+python3 tools/control_station.py --open-browser
+```
+
+网页中选择 UART7 串口，默认只接收低带宽基础状态；需要完整曲线时点击“开启详细遥测”。
+上位机可同时显示 STM32 和 ODrive 数据、在线修改四组 PID、控制转向与后轮、
+标记扰动并记录/导出 CSV。Mac 独立应用的构建和分享方式、安全边界及操作流程见
+[Web 上位机文档](docs/WEB_CONTROL_STATION.md)。
 
 ## 自动启动与零点
 

@@ -1,4 +1,6 @@
 build/
+dist/
+.venv-control-station/
 logs/
 .DS_Store
 

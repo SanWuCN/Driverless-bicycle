@@ -33,7 +33,7 @@ static void crc16_update(uint16_t *currect_crc, const uint8_t *src, uint32_t len
             }
             crc = temp;
         }
-    } 
+    }
     *currect_crc = crc;
 }
 
@@ -52,17 +52,18 @@ enum status
 /* function pointer */
 static on_data_received_event event_handler;
 static packet_t *RxPkt;
+static enum status decoder_status = kStatus_Idle;
 
  /**
- * @brief  ³õÊ¼»¯×ËÌ¬½âÂëÄ£¿é
- * @note   Íê³É³õÊ¼»¯Ò»¸öÒý½ÅÅäÖÃ
- * @param  pkt ½ÓÊÕ°üÖ¸Õë
- * @param  ½ÓÊÕ³É¹¦»Øµ÷º¯Êý
+ * @brief  åˆå§‹åŒ–å§¿æ€è§£ç æ¨¡å—
+ * @note   å®Œæˆåˆå§‹åŒ–ä¸€ä¸ªå¼•è„šé…ç½®
+ * @param  pkt æŽ¥æ”¶åŒ…æŒ‡é’ˆ
+ * @param  æŽ¥æ”¶æˆåŠŸå›žè°ƒå‡½æ•°
  * @code
 
  *      void OnDataReceived(Packet_t *pkt)
  *      {
- *          pkt->buf ÎªÊý¾Ý pkt->payload_len Îª½ÓÊÕµ½µÄ×Ö½Ú³¤¶È 
+ *          pkt->buf ä¸ºæ•°æ® pkt->payload_len ä¸ºæŽ¥æ”¶åˆ°çš„å­—èŠ‚é•¿åº¦
  *      }
  *
  *      Packet_t pkt;
@@ -75,12 +76,23 @@ void packet_decode_init(packet_t *pkt, on_data_received_event func)
     event_handler = func;
     memset(pkt, 0, sizeof(packet_t));
     RxPkt = pkt;
+    decoder_status = kStatus_Idle;
+}
+
+void packet_decode_reset(void)
+{
+    decoder_status = kStatus_Idle;
+    if (RxPkt != NULL)
+    {
+        RxPkt->ofs = 0u;
+        RxPkt->payload_len = 0u;
+    }
 }
 
  /**
- * @brief  ½ÓÊÕIMUÊý¾Ý
- * @note   ÔÚ´®¿Ú½ÓÊÕÖÐ¶ÏÖÐµ÷ÓÃ´Ëº¯Êý
- * @param  c ´®¿ÚÊý¾Ý
+ * @brief  æŽ¥æ”¶IMUæ•°æ®
+ * @note   åœ¨ä¸²å£æŽ¥æ”¶ä¸­æ–­ä¸­è°ƒç”¨æ­¤å‡½æ•°
+ * @param  c ä¸²å£æ•°æ®
  * @retval CH_OK
  */
 
@@ -89,67 +101,81 @@ uint32_t packet_decode(uint8_t c)
 {
     static uint16_t CRCReceived = 0;            /* CRC value received from a frame */
     static uint16_t CRCCalculated = 0;          /* CRC value caluated from a frame */
-    static uint8_t status = kStatus_Idle;       /* state machine */
     static uint8_t crc_header[4] = {0x5A, 0xA5, 0x00, 0x00};
-  
-    switch(status)
+
+    if (RxPkt == NULL || event_handler == NULL)
+    {
+        return CH_ERR;
+    }
+
+    switch(decoder_status)
     {
         case kStatus_Idle:
             if(c == 0x5A)
-                status = kStatus_Cmd;
+                decoder_status = kStatus_Cmd;
 			break;
         case kStatus_Cmd:
             RxPkt->type = c;
 			if(RxPkt->type == 0xA5)
-				status = kStatus_LenLow;
+				decoder_status = kStatus_LenLow;
+            else
+                decoder_status = (c == 0x5A) ? kStatus_Cmd : kStatus_Idle;
             break;
         case kStatus_LenLow:
             RxPkt->payload_len = c;
             crc_header[2] = c;
-            status = kStatus_LenHigh;
+            decoder_status = kStatus_LenHigh;
             break;
         case kStatus_LenHigh:
             RxPkt->payload_len |= (c<<8);
             crc_header[3] = c;
-            status = kStatus_CRCLow;
+            if ((RxPkt->payload_len == 0u) ||
+                (RxPkt->payload_len > MAX_PACKET_LEN))
+            {
+                packet_decode_reset();
+                return CH_ERR;
+            }
+            decoder_status = kStatus_CRCLow;
             break;
         case kStatus_CRCLow:
             CRCReceived = c;
-            status = kStatus_CRCHigh;
+            decoder_status = kStatus_CRCHigh;
             break;
         case kStatus_CRCHigh:
             CRCReceived |= (c<<8);
             RxPkt->ofs = 0;
             CRCCalculated = 0;
-            status = kStatus_Data;
+            decoder_status = kStatus_Data;
             break;
         case kStatus_Data:
-	
-            RxPkt->buf[RxPkt->ofs++] = c;
 
-            if(RxPkt->ofs >= MAX_PACKET_LEN)
+            if (RxPkt->ofs >= RxPkt->payload_len ||
+                RxPkt->ofs >= MAX_PACKET_LEN)
             {
-                status = kStatus_Idle;
-                return CH_ERR;   
+                packet_decode_reset();
+                return CH_ERR;
             }
+            RxPkt->buf[RxPkt->ofs++] = c;
 
             if(RxPkt->ofs >= RxPkt->payload_len && RxPkt->type == 0xA5)
             {
                 /* calculate CRC */
                 crc16_update(&CRCCalculated, crc_header, 4);
                 crc16_update(&CRCCalculated, RxPkt->buf, RxPkt->ofs);
-                
+
                 /* CRC match */
                 if(CRCCalculated == CRCReceived)
                 {
-					frame_count++;
-                    event_handler(RxPkt);
+                    if (event_handler(RxPkt))
+                    {
+                        frame_count++;
+                    }
                 }
-                status = kStatus_Idle;
+                packet_decode_reset();
             }
             break;
         default:
-            status = kStatus_Idle;
+            packet_decode_reset();
             break;
     }
     return CH_OK;

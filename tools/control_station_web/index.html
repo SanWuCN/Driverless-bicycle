@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Driverless Bicycle | Control Station</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <span class="brand-mark" aria-hidden="true">DB</span>
+      <div><span class="eyebrow">DRIVERLESS BICYCLE / CONTROL STATION</span><h1>车辆控制台</h1></div>
+    </div>
+    <div class="connection-strip" aria-label="连接状态">
+      <label class="port-picker" for="serial-port">串口
+        <select id="serial-port"><option value="">选择设备</option></select>
+      </label>
+      <span class="status-pill" id="uart-status"><i></i>UART7</span>
+      <span class="status-pill" id="odrive-status"><i></i>ODrive</span>
+      <span class="status-pill" id="control-status"><i></i>控制状态</span>
+      <span class="freshness" id="freshness">等待数据</span>
+    </div>
+    <div class="toolbar">
+      <button class="button secondary" id="telemetry-button" type="button">开启详细遥测</button>
+      <button class="button secondary" id="mark-button" type="button">标记扰动</button>
+      <button class="button secondary" id="pause-button" type="button">暂停曲线</button>
+      <button class="button record" id="record-button" type="button">开始记录</button>
+      <button class="button secondary" id="export-button" type="button">导出 CSV</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="control-column">
+      <section class="panel compact">
+        <div class="panel-heading">
+          <div><span class="kicker">01 / SYSTEM</span><h2>系统状态</h2></div>
+          <span class="sample-rate" id="sample-rate">-- Hz</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><span>横滚误差</span><strong id="metric-roll-error">--</strong><small>deg</small></div>
+          <div class="metric"><span>角速度</span><strong id="metric-roll-rate">--</strong><small>deg/s</small></div>
+          <div class="metric"><span>轮速</span><strong id="metric-wheel">--</strong><small>tps</small></div>
+          <div class="metric"><span>加速度指令</span><strong id="metric-accel">--</strong><small>tps²</small></div>
+          <div class="metric"><span>电流</span><strong id="metric-current">--</strong><small>A</small></div>
+          <div class="metric"><span>母线电压</span><strong id="metric-vbus">--</strong><small>V</small></div>
+        </div>
+        <div class="flag-list" id="flag-list" aria-live="polite"></div>
+      </section>
+
+      <section class="panel compact steering-panel">
+        <div class="panel-heading">
+          <div><span class="kicker">02 / STEERING</span><h2>转向</h2></div>
+          <span class="steering-direction" id="steering-direction">回中</span>
+        </div>
+        <div class="steering-readout">
+          <div><span>目标偏移</span><strong id="steering-target">0</strong><small>µs</small></div>
+          <div><span>平滑输出</span><strong id="steering-output">--</strong><small>µs</small></div>
+          <div><span>PWM</span><strong id="steering-pulse">--</strong><small>µs</small></div>
+        </div>
+        <div class="steering-presets" aria-label="转向预设">
+          <button class="steer-button" type="button" data-steer="150">左 150</button>
+          <button class="steer-button" type="button" data-steer="100">左 100</button>
+          <button class="steer-button center" type="button" data-steer="0">回中</button>
+          <button class="steer-button" type="button" data-steer="-100">右 100</button>
+          <button class="steer-button" type="button" data-steer="-150">右 150</button>
+        </div>
+        <div class="steering-fine">
+          <div class="range-heading"><span>右 150</span><output id="steering-slider-value">回中 · 0 µs</output><span>左 150</span></div>
+          <input id="steering-slider" type="range" min="0" max="42" step="1" value="21" aria-label="舵角精调滑块，每格 5 微秒">
+          <button class="button primary" id="steering-apply" type="button">执行</button>
+        </div>
+        <div class="inline-spec"><span>步进 5 µs</span><span>死区 ±50 µs</span><span>范围 ±150 µs</span></div>
+        <p class="command-feedback" id="steering-feedback" aria-live="polite">等待转向指令</p>
+      </section>
+
+      <section class="panel compact drive-panel">
+        <div class="panel-heading">
+          <div><span class="kicker">03 / PROPULSION</span><h2>后轮</h2></div>
+          <span class="drive-mode" id="drive-mode">静止</span>
+        </div>
+        <div class="drive-readout">
+          <div><span>目标速度</span><strong id="drive-target">0.00</strong><small>m/s</small></div>
+          <div><span>输出速度</span><strong id="drive-output">0.00</strong><small>m/s</small></div>
+          <div><span>实际速度</span><strong id="drive-actual">0.00</strong><small>m/s</small></div>
+          <div><span>里程</span><strong id="drive-odometry">0.00</strong><small>m</small></div>
+        </div>
+        <div class="drive-speed-control">
+          <div class="range-heading"><span>低速 0.05</span><output id="drive-speed-value">0.20 m/s</output><span>最快 1.00</span></div>
+          <input id="drive-speed-slider" type="range" min="0.05" max="1" step="0.05" value="0.2" aria-label="后轮速度，单位米每秒">
+        </div>
+        <div class="drive-actions">
+          <button class="drive-command" id="drive-forward" type="button">前进</button>
+          <button class="button stop" id="drive-stop" type="button">停止</button>
+          <button class="drive-command" id="drive-reverse" type="button">后退</button>
+        </div>
+        <button class="button demo" id="drive-demo" type="button">开始循环演示</button>
+        <div class="demo-progress">
+          <span id="demo-phase">演示未运行</span>
+          <span id="demo-cycles">0 组</span>
+        </div>
+        <div class="inline-spec"><span id="drive-fusion">融合里程待验证</span><span id="drive-safety">安全状态待连接</span></div>
+        <p class="command-feedback" id="drive-feedback" aria-live="polite">等待后轮指令</p>
+      </section>
+
+      <section class="panel pid-panel">
+        <div class="panel-heading">
+          <div><span class="kicker">04 / CONTROL LOOPS</span><h2>PID 调参 <small class="heading-note">RAM</small></h2></div>
+          <button class="text-button" id="refresh-params" type="button">读取参数</button>
+        </div>
+        <div id="pid-groups"></div>
+        <div class="pid-actions">
+          <button class="button primary" id="apply-all" type="button">应用全部改动</button>
+          <button class="button danger-ghost" id="revert-button" type="button">恢复固件默认值</button>
+        </div>
+        <p class="command-feedback" id="command-feedback" aria-live="polite">等待操作</p>
+      </section>
+
+      <section class="panel compact">
+        <div class="panel-heading"><div><span class="kicker">05 / HARDWARE</span><h2>ODrive Axis 0</h2></div></div>
+        <dl class="hardware-list" id="hardware-list">
+          <div><dt>状态</dt><dd>--</dd></div><div><dt>电流限制</dt><dd>--</dd></div>
+          <div><dt>加速度斜坡</dt><dd>--</dd></div><div><dt>速度限制</dt><dd>--</dd></div>
+          <div><dt>Axis 错误</dt><dd>--</dd></div><div><dt>Controller 错误</dt><dd>--</dd></div>
+        </dl>
+      </section>
+    </aside>
+
+    <section class="data-column">
+      <div class="chart-toolbar panel compact">
+        <div>
+          <span class="kicker">TELEMETRY / SIGNALS</span>
+          <h2 id="view-mode-label">实时曲线</h2>
+        </div>
+        <div class="chart-toolbar-actions">
+          <button class="button secondary" id="return-live" type="button" hidden>返回实时</button>
+          <label>时间窗
+            <select id="window-select">
+              <option value="10">10 秒</option>
+              <option value="30" selected>30 秒</option>
+              <option value="60">60 秒</option>
+              <option value="120">120 秒</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <section class="panel analysis-panel" id="analysis-panel" hidden aria-live="polite">
+        <div class="analysis-heading">
+          <div>
+            <span class="kicker">DISTURBANCE ASSESSMENT</span>
+            <h2>本次区间评估</h2>
+          </div>
+          <div class="quality-badge unknown" id="quality-badge">
+            <span id="quality-text">等待评估</span>
+            <strong id="quality-score">--</strong>
+          </div>
+        </div>
+        <div class="assessment-grid" aria-label="扰动恢复指标">
+          <div class="assessment-metric"><span>记录时长</span><strong id="assessment-duration">--</strong><small>s</small></div>
+          <div class="assessment-metric"><span>横滚最大峰值</span><strong id="assessment-peak">--</strong><small>deg</small></div>
+          <div class="assessment-metric"><span>反向过冲</span><strong id="assessment-overshoot">--</strong><small>%</small></div>
+          <div class="assessment-metric"><span>恢复至 ±0.3°</span><strong id="assessment-settle-03">--</strong><small id="assessment-settle-03-unit">s</small></div>
+          <div class="assessment-metric"><span>恢复至 ±0.2°</span><strong id="assessment-settle-02">--</strong><small id="assessment-settle-02-unit">s</small></div>
+          <div class="assessment-metric"><span>角速度峰值</span><strong id="assessment-rate">--</strong><small>deg/s</small></div>
+          <div class="assessment-metric"><span>ODrive 电流峰值</span><strong id="assessment-current">--</strong><small>A</small></div>
+          <div class="assessment-metric"><span>加速度限幅占比</span><strong id="assessment-saturation">--</strong><small>%</small></div>
+          <div class="assessment-metric"><span>120 增强占比</span><strong id="assessment-boost">--</strong><small>%</small></div>
+          <div class="assessment-metric"><span>速度包络介入</span><strong id="assessment-envelope">--</strong><small>%</small></div>
+          <div class="assessment-metric"><span>力矩实验标志</span><strong id="assessment-torque-control">--</strong><small>%</small></div>
+        </div>
+        <div class="analysis-details">
+          <div>
+            <h3>峰值序列</h3>
+            <div class="peak-sequence" id="peak-sequence"></div>
+          </div>
+          <div>
+            <h3>触发状态</h3>
+            <div class="flag-list analysis-flags" id="analysis-flags"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="chart-grid">
+        <article class="panel chart-card wide">
+          <div class="chart-heading"><div><span class="kicker">ATTITUDE</span><h3>横滚与动态零点</h3></div><strong id="chart-roll-value">--</strong></div>
+          <canvas id="chart-roll" aria-label="横滚误差、横滚角和动态零点实时曲线"></canvas>
+        </article>
+        <article class="panel chart-card">
+          <div class="chart-heading"><div><span class="kicker">RATE LOOP</span><h3>横滚角速度</h3></div><strong id="chart-rate-value">--</strong></div>
+          <canvas id="chart-rate" aria-label="实际角速度和目标角速度实时曲线"></canvas>
+        </article>
+        <article class="panel chart-card">
+          <div class="chart-heading"><div><span class="kicker">MOMENTUM WHEEL</span><h3>轮速与速度指令</h3></div><strong id="chart-wheel-value">--</strong></div>
+          <canvas id="chart-wheel" aria-label="动量轮轮速与速度指令实时曲线"></canvas>
+        </article>
+        <article class="panel chart-card">
+          <div class="chart-heading"><div><span class="kicker">ACCELERATION</span><h3>加速度需求与输出</h3></div><strong id="chart-accel-value">--</strong></div>
+          <canvas id="chart-accel" aria-label="原始和限幅加速度指令实时曲线"></canvas>
+        </article>
+        <article class="panel chart-card">
+          <div class="chart-heading"><div><span class="kicker">RATE PID</span><h3>P / I / D 分项</h3></div><strong id="chart-pid-value">--</strong></div>
+          <canvas id="chart-pid" aria-label="角速度环 PID 分项实时曲线"></canvas>
+        </article>
+        <article class="panel chart-card wide">
+          <div class="chart-heading"><div><span class="kicker">ODRIVE CURRENT</span><h3>电流指令与实测</h3></div><strong id="chart-current-value">--</strong></div>
+          <canvas id="chart-current" aria-label="ODrive 电流指令与实测实时曲线"></canvas>
+        </article>
+      </div>
+
+      <section class="panel event-panel">
+        <div class="panel-heading"><div><span class="kicker">EVENT LOG</span><h2>事件记录</h2></div><button class="text-button" id="clear-events" type="button">清空显示</button></div>
+        <ol id="event-list" class="event-list" aria-live="polite"></ol>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,24 +1,28 @@
 #include "task.h"
-#include "tim.h" 
+#include "tim.h"
 #include "imu.h"
+#include "imu_data_decode.h"
 #include "odrive.h"
 #include "servo.h"
 #include "upper.h"
 #include "balance_monitor.h"
 #include "packet.h"
 #include "zero_persistence.h"
+#include "steering.h"
+#include "drive_control.h"
 #include "math.h"
+#include "string.h"
 
 #define  FS 3
-#if FS==1  
+#if FS==1
     float fast_rate=8.0f,slow_rate=3.0f,mid_rate=5.0f;
 #elif FS==2
     float fast_rate=10.0f,slow_rate=4.50f,mid_rate=6.50f;
-#else 
+#else
     float fast_rate=12.0f,slow_rate=5.50f,mid_rate=6.50f;
 #endif
 
-#define fly_wheel_rate_limit 40 
+#define fly_wheel_rate_limit 40
 #define dt 0.100f
 #define PI 3.1415926f
 #define BALANCE_ARM_ROLL_WINDOW_DEG 3.0f
@@ -26,23 +30,51 @@
 #define BALANCE_ARM_HOLD_MS 2000u
 #define BALANCE_ARM_IMU_MIN_FRAMES 5u
 #define BALANCE_ARM_IMU_FRESH_MS 100u
+#define BALANCE_FALL_DISARM_ANGLE_DEG 8.0f
 #define BALANCE_FACTORY_ZERO_DEG (-2.18f)
 #define BALANCE_ZERO_RANGE_DEG 1.50f
+#define BALANCE_ODRIVE_SPEED_LIMIT_TPS 35.0f
+#define BALANCE_WHEEL_SPEED_ENVELOPE_START_TPS 25.0f
+#define BALANCE_ODRIVE_ACCEL_LIMIT_TPS2 80.0f
+#define BALANCE_ODRIVE_ACCEL_BOOST_LIMIT_TPS2 120.0f
+#define BALANCE_ACCEL_BOOST_MIN_ROLL_DEG 0.60f
+#define BALANCE_ACCEL_BOOST_MIN_RATE_DPS 0.50f
+#define BALANCE_RATE_TARGET_LIMIT_DPS 5.0f
+#define BALANCE_RATE_LIMIT_MAX_ELAPSED_MS 10u
+#define BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS 300u
+#define BALANCE_ODRIVE_STATE_REQUEST_PERIOD_MS 100u
+#define BALANCE_CONTROL_DT_S 0.002f
+#define BALANCE_WHEEL_CONTROL_DT_S 0.040f
+#define BALANCE_RATE_INTEGRAL_LIMIT_DPS_S 5.0f
+#define BALANCE_ANGLE_INTEGRAL_LIMIT_DEG_S 2.0f
+#define BALANCE_WHEEL_INTEGRAL_LIMIT_TPS_S 100.0f
+#define BALANCE_WHEEL_BIAS_LIMIT_DEG 1.5f
+#define BALANCE_DEFAULT_RATE_KP (-20.0f)
+#define BALANCE_DEFAULT_RATE_KI 0.0f
+#define BALANCE_DEFAULT_RATE_KD (-0.004f)
+#define BALANCE_DEFAULT_ANGLE_KP (-5.0f)
+#define BALANCE_DEFAULT_ANGLE_KI 0.0f
+#define BALANCE_DEFAULT_ANGLE_KD (-1.5f)
+#define BALANCE_DEFAULT_WHEEL_KP 0.06f
+#define BALANCE_DEFAULT_WHEEL_KI 0.003f
+#define BALANCE_DEFAULT_STEER_KP 1.5f
+#define BALANCE_DEFAULT_STEER_KI 0.0f
+#define BALANCE_DEFAULT_STEER_KD 0.2f
 
 paramTypeDef param;
-float PWM_X,PWM_accel,PWM_Final;// PWMÖĞ¼äÁ¿
+float PWM_X,PWM_accel,PWM_Final;// PWMä¸­é—´é‡
 extern int key_times;
-int cnt;//½Ç¶È»·¼ÆÊı
-int cnt1;//ËÙ¶È»·¼ÆÊı
-int cnt_vel_callback1;//·ÉÂÖËÙ¶È·´À¡¼ÆÊı
-int cnt_vel_set1;//·ÉÂÖËÙ¶È·¢ËÍ¼ÆÊı
-int cnt_balance;//×ÔĞĞ³µÆ½ºâ¿ØÖÆÖÜÆÚ¼ÆÊı
-int cnt_rate;//ËÙ¶ÈÉèÖÃ¼ÆÊı
-float rate;//ËÀÇøÍâ·ÉÂÖËÙ¶È
-float start_yaw0;//¿ªÊ¼»ı·ÖÊ±µÄÆ«º½½Ç
-float last_rate=0;//¼ÇÂ¼ÉÏÒ»Ê±¿ÌµÄËÙ¶È
+int cnt;//è§’åº¦ç¯è®¡æ•°
+int cnt1;//é€Ÿåº¦ç¯è®¡æ•°
+int cnt_vel_callback1;//é£è½®é€Ÿåº¦åé¦ˆè®¡æ•°
+int cnt_vel_set1;//é£è½®é€Ÿåº¦å‘é€è®¡æ•°
+int cnt_balance;//è‡ªè¡Œè½¦å¹³è¡¡æ§åˆ¶å‘¨æœŸè®¡æ•°
+int cnt_rate;//é€Ÿåº¦è®¾ç½®è®¡æ•°
+float rate;//æ­»åŒºå¤–é£è½®é€Ÿåº¦
+float start_yaw0;//å¼€å§‹ç§¯åˆ†æ—¶çš„åèˆªè§’
+float last_rate=0;//è®°å½•ä¸Šä¸€æ—¶åˆ»çš„é€Ÿåº¦
 
-// ¡¾ĞŞ¸Äµã1¡¿½«PID»ı·ÖÏîÒÆÖÁÈ«¾Ö£¬·½±ãµ¹µØÊ±ÇåÁã
+// ã€ä¿®æ”¹ç‚¹1ã€‘å°†PIDç§¯åˆ†é¡¹ç§»è‡³å…¨å±€ï¼Œæ–¹ä¾¿å€’åœ°æ—¶æ¸…é›¶
 float Angle_Velocity_Last_Bias = 0;
 float Angle_Velocity_Integral = 0;
 float X_balance_error = 0;
@@ -50,9 +82,157 @@ float Velocity_encoder_bias_integral = 0;
 static uint32_t balance_arm_start_ms;
 static uint32_t balance_last_imu_frame_count;
 static uint32_t balance_last_imu_frame_ms;
+static uint32_t drive_last_accel_frame_count;
+static uint32_t drive_last_accel_frame_ms;
 static bool balance_arm_window;
 static bool balance_imu_ready;
+static bool balance_odrive_ready;
+static bool balance_odrive_timeout;
+static bool balance_odrive_fault;
+static bool balance_fall_disarm_latched;
 static bool angle_velocity_initialized;
+static uint32_t balance_last_odrive_state_request_ms;
+static float rate_target_dps;
+static float rate_error_dps;
+static float rate_p_term_tps;
+static float rate_i_term_tps;
+static float rate_d_term_tps;
+static float rate_raw_velocity_tps;
+static float rate_raw_acceleration_tps2;
+static float rate_limited_acceleration_tps2;
+static float rate_limited_velocity_tps;
+static float rate_current_command_a;
+static float rate_torque_command_nm;
+static bool rate_acceleration_boost_active;
+static bool rate_speed_envelope_active;
+static uint32_t rate_limiter_previous_ms;
+static bool rate_limiter_initialized;
+static float wheel_feedback_bias_deg;
+
+static float balance_clamp(float value, float lower, float upper)
+{
+    if (value < lower)
+    {
+        return lower;
+    }
+    if (value > upper)
+    {
+        return upper;
+    }
+    return value;
+}
+
+static float balance_select_acceleration_limit_tps2(
+    float roll_error_deg,
+    float roll_rate_dps,
+    float raw_acceleration_tps2)
+{
+    const bool finite_inputs = isfinite(roll_error_deg) &&
+                               isfinite(roll_rate_dps) &&
+                               isfinite(raw_acceleration_tps2);
+    const bool large_roll_error =
+        fabsf(roll_error_deg) >= BALANCE_ACCEL_BOOST_MIN_ROLL_DEG;
+    const bool meaningful_roll_rate =
+        fabsf(roll_rate_dps) >= BALANCE_ACCEL_BOOST_MIN_RATE_DPS;
+    const bool falling_away_from_zero =
+        (roll_error_deg * roll_rate_dps) > 0.0f;
+    const bool corrective_output_direction =
+        (roll_error_deg * raw_acceleration_tps2) > 0.0f;
+    const bool base_limit_is_insufficient =
+        fabsf(raw_acceleration_tps2) > BALANCE_ODRIVE_ACCEL_LIMIT_TPS2;
+
+    rate_acceleration_boost_active = finite_inputs &&
+                                     large_roll_error &&
+                                     meaningful_roll_rate &&
+                                     falling_away_from_zero &&
+                                     corrective_output_direction &&
+                                     base_limit_is_insufficient;
+    return rate_acceleration_boost_active
+               ? BALANCE_ODRIVE_ACCEL_BOOST_LIMIT_TPS2
+               : BALANCE_ODRIVE_ACCEL_LIMIT_TPS2;
+}
+
+static float balance_integrate_acceleration_command(
+    float raw_acceleration_tps2,
+    float acceleration_limit_tps2,
+    float wheel_speed_tps)
+{
+    const uint32_t now_ms = HAL_GetTick();
+    uint32_t elapsed_ms = 1u;
+
+    if (!isfinite(raw_acceleration_tps2))
+    {
+        rate_raw_acceleration_tps2 = 0.0f;
+        rate_limited_acceleration_tps2 = 0.0f;
+        rate_raw_velocity_tps = 0.0f;
+        rate_limited_velocity_tps = 0.0f;
+        rate_current_command_a = 0.0f;
+        rate_torque_command_nm = 0.0f;
+        rate_speed_envelope_active = false;
+        rate_limiter_previous_ms = now_ms;
+        rate_limiter_initialized = true;
+        return 0.0f;
+    }
+
+    if (rate_limiter_initialized)
+    {
+        elapsed_ms = now_ms - rate_limiter_previous_ms;
+        if (elapsed_ms == 0u)
+        {
+            return rate_limited_velocity_tps;
+        }
+        if (elapsed_ms > BALANCE_RATE_LIMIT_MAX_ELAPSED_MS)
+        {
+            elapsed_ms = BALANCE_RATE_LIMIT_MAX_ELAPSED_MS;
+        }
+    }
+    rate_limiter_previous_ms = now_ms;
+    rate_limiter_initialized = true;
+
+    rate_raw_acceleration_tps2 = raw_acceleration_tps2;
+    rate_limited_acceleration_tps2 = balance_clamp(
+        raw_acceleration_tps2,
+        -acceleration_limit_tps2,
+        acceleration_limit_tps2);
+
+    /*
+     * Preserve reaction-wheel speed headroom without weakening recovery
+     * torque. Between 25 and 35 tps, only acceleration that would increase
+     * measured wheel-speed magnitude is tapered to zero. Braking/reversing
+     * acceleration always retains full authority.
+     */
+    rate_speed_envelope_active = false;
+    if (isfinite(wheel_speed_tps) &&
+        (wheel_speed_tps * rate_limited_acceleration_tps2) > 0.0f &&
+        fabsf(wheel_speed_tps) > BALANCE_WHEEL_SPEED_ENVELOPE_START_TPS)
+    {
+        const float envelope_width_tps =
+            BALANCE_ODRIVE_SPEED_LIMIT_TPS -
+            BALANCE_WHEEL_SPEED_ENVELOPE_START_TPS;
+        const float outward_scale = balance_clamp(
+            (BALANCE_ODRIVE_SPEED_LIMIT_TPS - fabsf(wheel_speed_tps)) /
+                envelope_width_tps,
+            0.0f,
+            1.0f);
+        rate_limited_acceleration_tps2 *= outward_scale;
+        rate_speed_envelope_active = true;
+    }
+    /*
+     * Convert the acceleration request into an Axis 0 velocity target.  The
+     * elapsed time is capped so a delayed callback cannot create a large
+     * command jump after a reset or debugger pause.
+     */
+    rate_raw_velocity_tps = rate_limited_velocity_tps +
+                            rate_limited_acceleration_tps2 *
+                                ((float)elapsed_ms * 0.001f);
+    rate_limited_velocity_tps = balance_clamp(
+        rate_raw_velocity_tps,
+        -BALANCE_ODRIVE_SPEED_LIMIT_TPS,
+        BALANCE_ODRIVE_SPEED_LIMIT_TPS);
+    rate_current_command_a = 0.0f;
+    rate_torque_command_nm = 0.0f;
+    return rate_limited_velocity_tps;
+}
 
 static void balance_reset_controller_state(void)
 {
@@ -60,17 +240,35 @@ static void balance_reset_controller_state(void)
     PWM_accel = 0.0f;
     PWM_Final = 0.0f;
     odrive.set_speed0 = 0.0f;
+    odrive.set_torque0 = 0.0f;
     cnt1 = 0;
     Angle_Velocity_Last_Bias = 0.0f;
     Angle_Velocity_Integral = 0.0f;
     X_balance_error = 0.0f;
     Velocity_encoder_bias_integral = 0.0f;
+    wheel_feedback_bias_deg = 0.0f;
     angle_velocity_initialized = false;
+    rate_target_dps = 0.0f;
+    rate_error_dps = 0.0f;
+    rate_p_term_tps = 0.0f;
+    rate_i_term_tps = 0.0f;
+    rate_d_term_tps = 0.0f;
+    rate_raw_velocity_tps = 0.0f;
+    rate_raw_acceleration_tps2 = 0.0f;
+    rate_limited_acceleration_tps2 = 0.0f;
+    rate_limited_velocity_tps = 0.0f;
+    rate_current_command_a = 0.0f;
+    rate_torque_command_nm = 0.0f;
+    rate_acceleration_boost_active = false;
+    rate_speed_envelope_active = false;
+    rate_limiter_previous_ms = HAL_GetTick();
+    rate_limiter_initialized = false;
 }
 
 static void balance_auto_arm_update(void)
 {
     const uint32_t now_ms = HAL_GetTick();
+    const bool imu_finite = isfinite(imu.rol) && isfinite(imu.vx);
     if (frame_count != balance_last_imu_frame_count)
     {
         balance_last_imu_frame_count = frame_count;
@@ -79,17 +277,47 @@ static void balance_auto_arm_update(void)
     balance_imu_ready = (frame_count >= BALANCE_ARM_IMU_MIN_FRAMES) &&
                         ((uint32_t)(now_ms - balance_last_imu_frame_ms) <=
                          BALANCE_ARM_IMU_FRESH_MS);
+    const bool odrive_heartbeat_fresh = odrive.heartbeat_seen[0] &&
+        ((uint32_t)(now_ms - odrive.last_heartbeat_ms[0]) <=
+         BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS);
+    const bool odrive_feedback_fresh = odrive_axis_feedback_fresh(
+        0u, now_ms, BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS);
+    const bool odrive_error_free = odrive.axis_error[0] == 0u;
+    balance_odrive_ready = odrive_feedback_fresh &&
+                            odrive_axis_closed_loop_error_free(0u);
+    balance_odrive_timeout = !odrive_feedback_fresh;
+    balance_odrive_fault = odrive_heartbeat_fresh &&
+                           (!odrive_error_free ||
+                            ((param.scope_flag == 1) &&
+                             (odrive.axis_state[0] != 8u)));
 
     const bool inside_arm_window = balance_imu_ready &&
-                                   isfinite(imu.rol) &&
-                                   isfinite(imu.vx) &&
+                                   imu_finite &&
+                                   odrive_feedback_fresh &&
+                                   odrive_error_free &&
                                    (fabsf(imu.rol - param.angular_zero) <=
                                     BALANCE_ARM_ROLL_WINDOW_DEG) &&
                                    (fabsf(imu.vx) <= BALANCE_ARM_RATE_WINDOW_DPS);
+    const bool fall_angle_exceeded = imu_finite &&
+        (fabsf(imu.rol - balance_monitor_zero_for_control()) >=
+         BALANCE_FALL_DISARM_ANGLE_DEG);
 
     if (param.scope_flag == 1)
     {
         balance_arm_window = false;
+        if (fall_angle_exceeded)
+        {
+            balance_fall_disarm_latched = true;
+            param.scope_flag = 0;
+            balance_reset_controller_state();
+            (void)odrive_request_axis_state(0u, 1u);
+            return;
+        }
+        if (!balance_imu_ready || !imu_finite || balance_odrive_fault)
+        {
+            param.scope_flag = 0;
+            balance_reset_controller_state();
+        }
         return;
     }
 
@@ -97,6 +325,19 @@ static void balance_auto_arm_update(void)
     if (!inside_arm_window)
     {
         balance_arm_window = false;
+        return;
+    }
+
+    if (!balance_odrive_ready)
+    {
+        balance_arm_window = false;
+        if ((odrive.axis_state[0] == 1u) &&
+            ((uint32_t)(now_ms - balance_last_odrive_state_request_ms) >=
+             BALANCE_ODRIVE_STATE_REQUEST_PERIOD_MS))
+        {
+            balance_last_odrive_state_request_ms = now_ms;
+            (void)odrive_request_axis_state(0u, 8u);
+        }
         return;
     }
 
@@ -111,46 +352,70 @@ static void balance_auto_arm_update(void)
     {
         balance_reset_controller_state();
         param.scope_flag = 1;
+        balance_fall_disarm_latched = false;
         balance_arm_window = false;
     }
 }
 
-//¶¨Ê±Æ÷ 2ms
+//å®šæ—¶å™¨ 2ms
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if(htim == &htim3)
     {
-        imu_get();//ÍÓÂİÒÇ¶ÁÈ¡
+        imu_get();//é™€èºä»ªè¯»å–
         balance_auto_arm_update();
-        
-        cnt_vel_set1++;
-        cnt_balance++;  
-        cnt_rate++;
-        if(cnt_rate>=50)
+
+        const bool rear_feedback_ready = odrive_axis_feedback_fresh(
+            1u, HAL_GetTick(), BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS) &&
+            odrive_axis_closed_loop_error_free(1u);
+        if (acceleration_frame_count != drive_last_accel_frame_count)
         {
-            cnt_rate=0;
-            rate_set();//ËÙ¶ÈÉèÖÃ
+            drive_last_accel_frame_count = acceleration_frame_count;
+            drive_last_accel_frame_ms = HAL_GetTick();
         }
-        if(param.scope_flag == 1)//·ÉÂÖÆ½ºâ¿ØÖÆÖÜÆÚ 2ms
+        const bool drive_accel_ready = acceleration_frame_count > 0u &&
+            (uint32_t)(HAL_GetTick() - drive_last_accel_frame_ms) <=
+                BALANCE_ARM_IMU_FRESH_MS;
+        drive_control_update(odrive.now_pos1,
+                             odrive.now_speed1,
+                             odrive.last_encoder_ms[1],
+                             imu.ax,
+                             drive_accel_ready,
+                             param.scope_flag == 1,
+                             rear_feedback_ready,
+                             balance_fall_disarm_latched);
+        steering_update(imu.yaw,
+                        imu.vz,
+                        imu.rol - balance_monitor_zero_for_control(),
+                        odrive.now_speed1,
+                        param.scope_flag == 1,
+                        balance_imu_ready,
+                        rear_feedback_ready,
+                        balance_fall_disarm_latched);
+
+        cnt_vel_set1++;
+        cnt_balance++;
+        if(param.scope_flag == 1)//é£è½®å¹³è¡¡æ§åˆ¶å‘¨æœŸ 2ms
         {
                 balance();
                 cnt_balance=0;
         }
-        if(cnt_vel_set1 >= 1)//odrive canÍ¨ĞÅÖÜÆÚ 2ms    
-        {               
+        if(cnt_vel_set1 >= 1)//odrive cané€šä¿¡å‘¨æœŸ 2ms
+        {
                 cnt_vel_callback1++;
                 odrive_speed_ctrl(0,odrive.set_speed0);
-                odrive_vel_callback(0); 
-                
+                odrive_vel_callback(0);
+
                 cnt_vel_set1 = 0;
-                if(cnt_vel_callback1 == 20) 
+                if(cnt_vel_callback1 == 20)
                 {
                         cnt_vel_callback1 = 0;
                         odrive_speed_ctrl(1,-odrive.set_speed1);
+                        odrive_vel_callback(1);
                 }
         }
 
-        /* ²É¼¯¿ØÖÆÁ¿£¬²¢ÔÚÒÑÆô¶¯ÇÒºóÂÖÍ£Ö¹Ê±¸üĞÂ¶¯Ì¬Áãµã¡£ */
+        /* é‡‡é›†æ§åˆ¶é‡ï¼Œå¹¶åœ¨å·²å¯åŠ¨ä¸”åè½®åœæ­¢æ—¶æ›´æ–°åŠ¨æ€é›¶ç‚¹ã€‚ */
         balance_monitor_update(imu.rol,
                                imu.vx,
                                odrive.now_speed0,
@@ -160,66 +425,84 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
                                param.scope_flag == 1,
                                balance_arm_window,
                                param.run_flag == 0,
-                               balance_imu_ready);
+                               balance_imu_ready,
+                               balance_odrive_ready,
+                               balance_odrive_timeout,
+                               balance_odrive_fault,
+                               balance_fall_disarm_latched,
+                               rate_target_dps,
+                               rate_error_dps,
+                               rate_p_term_tps,
+                               rate_i_term_tps,
+                               rate_d_term_tps,
+                               rate_raw_velocity_tps,
+                               rate_raw_acceleration_tps2,
+                               rate_limited_acceleration_tps2,
+                               rate_current_command_a,
+                               rate_torque_command_nm,
+                               rate_acceleration_boost_active,
+                               rate_speed_envelope_active,
+                               false);
     }
 }
 
 void rate_set()
 {
-    if(param.run_flag==1)//ÔËĞĞºóÂÖ
-    {
-        odrive.set_speed1 = -0.7;
-    }
-    else
-    {
-        odrive.set_speed1=0;
-    }
+    /* Rear-wheel commands are owned by drive_control_update(). */
 }
 
-//pid²ÎÊı³õÊ¼»¯
+//pidå‚æ•°åˆå§‹åŒ–
 void param_init(){
-    // ½Ç¶È»·
-    param.angular_kp = -5.0f;      
-    param.angular_ki = 0;
-    param.angular_kd = -1.5f;      
-    
-    // ½ÇËÙ¶È»·
-    param.angular_v_kp = -20.0f;   
-    param.angular_v_ki = 0; 
-    param.angular_v_kd =-2.0f; 
-    
-    // ËÙ¶È»·
-    param.fly_wheel_speed_kp = 0.04; 
-    param.fly_wheel_speed_ki = 0;
+    // è§’åº¦ç¯
+    param.angular_kp = BALANCE_DEFAULT_ANGLE_KP;
+    param.angular_ki = BALANCE_DEFAULT_ANGLE_KI;
+    param.angular_kd = BALANCE_DEFAULT_ANGLE_KD;
+
+    // è§’é€Ÿåº¦ç¯
+    param.angular_v_kp = BALANCE_DEFAULT_RATE_KP;
+    param.angular_v_ki = BALANCE_DEFAULT_RATE_KI;
+    param.angular_v_kd = BALANCE_DEFAULT_RATE_KD;
+
+    // é€Ÿåº¦ç¯
+    param.fly_wheel_speed_kp = BALANCE_DEFAULT_WHEEL_KP;
+    param.fly_wheel_speed_ki = BALANCE_DEFAULT_WHEEL_KI;
     param.fly_wheel_speed_kd = 0;
-    
+
     param.zero_speed_kp=0;
     param.zero_speed_kd=0;
     param.zero_speed_ki=0;
-    
+
     param.angular_zero = BALANCE_FACTORY_ZERO_DEG;
     zero_persistence_init(BALANCE_FACTORY_ZERO_DEG,
                           BALANCE_ZERO_RANGE_DEG,
                           &param.angular_zero);
 
-    // ÉÏµçÏÈ±£³Ö¶¯Á¿ÂÖÎªÁã£»ÊÖ¹¤·öÕı²¢ÎÈ¶¨ 2 Ãëºó×Ô¶¯½øÈëÆ½ºâ¿ØÖÆ¡£
+    // ä¸Šç”µå…ˆä¿æŒåŠ¨é‡è½®ä¸ºé›¶ï¼›æ‰‹å·¥æ‰¶æ­£å¹¶ç¨³å®š 2 ç§’åè‡ªåŠ¨è¿›å…¥å¹³è¡¡æ§åˆ¶ã€‚
     param.scope_flag = 0;
     odrive.set_speed0 = 0.0f;
+    odrive.set_torque0 = 0.0f;
     balance_arm_start_ms = 0u;
     balance_last_imu_frame_count = 0u;
     balance_last_imu_frame_ms = 0u;
+    drive_last_accel_frame_count = 0u;
+    drive_last_accel_frame_ms = 0u;
     balance_arm_window = false;
     balance_imu_ready = false;
+    balance_odrive_ready = false;
+    balance_odrive_timeout = true;
+    balance_odrive_fault = false;
+    balance_fall_disarm_latched = false;
+    balance_last_odrive_state_request_ms = 0u;
 
-    // ÉÏµçÄ¬ÈÏ±£³ÖºóÂÖÍ£Ö¹£»ÊÕµ½Ã÷È·ÔËĞĞÖ¸ÁîºóÔÙ½« run_flag ÖÃ 1¡£
+    // ä¸Šç”µé»˜è®¤ä¿æŒåè½®åœæ­¢ï¼›æ”¶åˆ°æ˜ç¡®è¿è¡ŒæŒ‡ä»¤åå†å°† run_flag ç½® 1ã€‚
     param.run_flag = 0;
     odrive.set_speed1 = 0.0f;
-        
-    param.Steer_Kp = 1.5;
-    param.Steer_Ki = 0.2;
-    param.Steer_Kd = 0;
-    
-    // ³õÊ¼»¯Ê±Çå¿ÕËùÓĞ»ı·Ö
+
+    param.Steer_Kp = BALANCE_DEFAULT_STEER_KP;
+    param.Steer_Ki = BALANCE_DEFAULT_STEER_KI;
+    param.Steer_Kd = BALANCE_DEFAULT_STEER_KD;
+
+    // åˆå§‹åŒ–æ—¶æ¸…ç©ºæ‰€æœ‰ç§¯åˆ†
     Angle_Velocity_Integral = 0;
     Angle_Velocity_Last_Bias = 0;
     X_balance_error = 0;
@@ -227,92 +510,308 @@ void param_init(){
     angle_velocity_initialized = false;
 
     balance_monitor_init(BALANCE_FACTORY_ZERO_DEG, param.angular_zero);
+    drive_control_init();
 }
 
-//½ÇËÙ¶È»·pid
+enum
+{
+    TUNING_GROUP_RATE = 1u,
+    TUNING_GROUP_ANGLE = 2u,
+    TUNING_GROUP_WHEEL = 3u,
+    TUNING_GROUP_STEER = 4u
+};
+
+typedef struct
+{
+    const char *name;
+    float *value;
+    float minimum;
+    float maximum;
+    uint8_t group;
+} BalanceTuningDescriptor;
+
+static BalanceTuningDescriptor balance_tuning_parameters[] = {
+    {"RATE_KP", &param.angular_v_kp, -40.0f, -0.5f, TUNING_GROUP_RATE},
+    {"RATE_KI", &param.angular_v_ki, -5.0f, 0.0f, TUNING_GROUP_RATE},
+    {"RATE_KD", &param.angular_v_kd, -0.05f, 0.0f, TUNING_GROUP_RATE},
+    {"ANGLE_KP", &param.angular_kp, -10.0f, -0.1f, TUNING_GROUP_ANGLE},
+    {"ANGLE_KI", &param.angular_ki, -0.1f, 0.1f, TUNING_GROUP_ANGLE},
+    {"ANGLE_KD", &param.angular_kd, -5.0f, 0.0f, TUNING_GROUP_ANGLE},
+    {"WHEEL_KP", &param.fly_wheel_speed_kp, 0.0f, 0.2f, TUNING_GROUP_WHEEL},
+    {"WHEEL_KI", &param.fly_wheel_speed_ki, 0.0f, 0.1f, TUNING_GROUP_WHEEL},
+    {"STEER_KP", &param.Steer_Kp, -10.0f, 10.0f, TUNING_GROUP_STEER},
+    {"STEER_KI", &param.Steer_Ki, -2.0f, 2.0f, TUNING_GROUP_STEER},
+    {"STEER_KD", &param.Steer_Kd, -5.0f, 5.0f, TUNING_GROUP_STEER}
+};
+
+static void balance_tuning_reset_group(uint8_t group)
+{
+    if (group == TUNING_GROUP_RATE)
+    {
+        Angle_Velocity_Integral = 0.0f;
+        Angle_Velocity_Last_Bias = 0.0f;
+        angle_velocity_initialized = false;
+    }
+    else if (group == TUNING_GROUP_ANGLE)
+    {
+        X_balance_error = 0.0f;
+    }
+    else if (group == TUNING_GROUP_WHEEL)
+    {
+        Velocity_encoder_bias_integral = 0.0f;
+        wheel_feedback_bias_deg = 0.0f;
+    }
+}
+
+BalanceTuningResult balance_tuning_set(const char *name,
+                                       float requested_value,
+                                       float *applied_value)
+{
+    if (name == NULL || !isfinite(requested_value))
+    {
+        return BALANCE_TUNING_OUT_OF_RANGE;
+    }
+    /* Online gain changes are forbidden while the rear drive wheel is running. */
+    if (param.run_flag != 0)
+    {
+        return BALANCE_TUNING_UNSAFE_STATE;
+    }
+
+    const size_t parameter_count =
+        sizeof(balance_tuning_parameters) / sizeof(balance_tuning_parameters[0]);
+    for (size_t index = 0u; index < parameter_count; index++)
+    {
+        BalanceTuningDescriptor *descriptor = &balance_tuning_parameters[index];
+        if (strcmp(name, descriptor->name) != 0)
+        {
+            continue;
+        }
+        if (requested_value < descriptor->minimum ||
+            requested_value > descriptor->maximum)
+        {
+            return BALANCE_TUNING_OUT_OF_RANGE;
+        }
+
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        *descriptor->value = requested_value;
+        balance_tuning_reset_group(descriptor->group);
+        if (primask == 0u)
+        {
+            __enable_irq();
+        }
+        if (applied_value != NULL)
+        {
+            *applied_value = requested_value;
+        }
+        return BALANCE_TUNING_OK;
+    }
+    return BALANCE_TUNING_UNKNOWN_PARAMETER;
+}
+
+void balance_tuning_get(BalanceTuningParameters *parameters)
+{
+    if (parameters == NULL)
+    {
+        return;
+    }
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    parameters->rate_kp = param.angular_v_kp;
+    parameters->rate_ki = param.angular_v_ki;
+    parameters->rate_kd = param.angular_v_kd;
+    parameters->angle_kp = param.angular_kp;
+    parameters->angle_ki = param.angular_ki;
+    parameters->angle_kd = param.angular_kd;
+    parameters->wheel_kp = param.fly_wheel_speed_kp;
+    parameters->wheel_ki = param.fly_wheel_speed_ki;
+    parameters->steer_kp = param.Steer_Kp;
+    parameters->steer_ki = param.Steer_Ki;
+    parameters->steer_kd = param.Steer_Kd;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+}
+
+BalanceTuningResult balance_tuning_revert(void)
+{
+    if (param.run_flag != 0)
+    {
+        return BALANCE_TUNING_UNSAFE_STATE;
+    }
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    param.angular_v_kp = BALANCE_DEFAULT_RATE_KP;
+    param.angular_v_ki = BALANCE_DEFAULT_RATE_KI;
+    param.angular_v_kd = BALANCE_DEFAULT_RATE_KD;
+    param.angular_kp = BALANCE_DEFAULT_ANGLE_KP;
+    param.angular_ki = BALANCE_DEFAULT_ANGLE_KI;
+    param.angular_kd = BALANCE_DEFAULT_ANGLE_KD;
+    param.fly_wheel_speed_kp = BALANCE_DEFAULT_WHEEL_KP;
+    param.fly_wheel_speed_ki = BALANCE_DEFAULT_WHEEL_KI;
+    param.Steer_Kp = BALANCE_DEFAULT_STEER_KP;
+    param.Steer_Ki = BALANCE_DEFAULT_STEER_KI;
+    param.Steer_Kd = BALANCE_DEFAULT_STEER_KD;
+    balance_tuning_reset_group(TUNING_GROUP_RATE);
+    balance_tuning_reset_group(TUNING_GROUP_ANGLE);
+    balance_tuning_reset_group(TUNING_GROUP_WHEEL);
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+    return BALANCE_TUNING_OK;
+}
+
+//è§’é€Ÿåº¦ç¯pid
 float Angle_Velocity(float Gyro,float Gyro_Target)
 {
     float Angle_Velocity_Bias;
     float PWM_Out;
-    // static float Angle_Velocity_Last_Bias,Angle_Velocity_Integral; // ¡¾ĞŞ¸Ä¡¿ÒÆÖÁÈ«¾Ö
-    Angle_Velocity_Bias = Gyro_Target - Gyro; 
+    // static float Angle_Velocity_Last_Bias,Angle_Velocity_Integral; // ã€ä¿®æ”¹ã€‘ç§»è‡³å…¨å±€
+    Angle_Velocity_Bias = Gyro_Target - Gyro;
     if (!angle_velocity_initialized)
     {
         Angle_Velocity_Last_Bias = Angle_Velocity_Bias;
         angle_velocity_initialized = true;
     }
-    Angle_Velocity_Integral+=Angle_Velocity_Bias;
-    if(Angle_Velocity_Integral > 10000)
-            Angle_Velocity_Integral =10000;                    
-    if(Angle_Velocity_Integral < -10000) 
-            Angle_Velocity_Integral = -10000;               
-    PWM_Out = param.angular_v_kp * Angle_Velocity_Bias + param.angular_v_ki * Angle_Velocity_Integral + param.angular_v_kd * (Angle_Velocity_Bias - Angle_Velocity_Last_Bias);
+    const float derivative_dps2 =
+        (Angle_Velocity_Bias - Angle_Velocity_Last_Bias) /
+        BALANCE_CONTROL_DT_S;
+    float candidate_integral = Angle_Velocity_Integral +
+                               Angle_Velocity_Bias * BALANCE_CONTROL_DT_S;
+    candidate_integral = balance_clamp(
+        candidate_integral,
+        -BALANCE_RATE_INTEGRAL_LIMIT_DPS_S,
+        BALANCE_RATE_INTEGRAL_LIMIT_DPS_S);
+    rate_target_dps = Gyro_Target;
+    rate_error_dps = Angle_Velocity_Bias;
+    rate_p_term_tps = param.angular_v_kp * Angle_Velocity_Bias;
+    rate_d_term_tps = param.angular_v_kd * derivative_dps2;
+    const float candidate_i_term = param.angular_v_ki * candidate_integral;
+    const float candidate_output = rate_p_term_tps +
+                                   candidate_i_term +
+                                   rate_d_term_tps;
+    const float integral_output_delta =
+        param.angular_v_ki * Angle_Velocity_Bias * BALANCE_CONTROL_DT_S;
+    const bool allow_integrator =
+        fabsf(candidate_output) <= BALANCE_ODRIVE_ACCEL_LIMIT_TPS2 ||
+        (candidate_output > BALANCE_ODRIVE_ACCEL_LIMIT_TPS2 &&
+         integral_output_delta < 0.0f) ||
+        (candidate_output < -BALANCE_ODRIVE_ACCEL_LIMIT_TPS2 &&
+         integral_output_delta > 0.0f);
+    if (allow_integrator)
+    {
+        Angle_Velocity_Integral = candidate_integral;
+    }
+    rate_i_term_tps = param.angular_v_ki * Angle_Velocity_Integral;
+    PWM_Out = rate_p_term_tps + rate_i_term_tps + rate_d_term_tps;
     Angle_Velocity_Last_Bias = Angle_Velocity_Bias;
     return PWM_Out;
 }
 
-//½Ç¶È»·pid
+//è§’åº¦ç¯pid
 float X_balance_Control(float Angle,float Angle_Zero,float gyro)
 {
      float PWM,Bias;
-     // static float error; // ¡¾ĞŞ¸Ä¡¿ÒÆÖÁÈ«¾Ö X_balance_error
-     Bias=Angle-Angle_Zero;                                        
-     X_balance_error+=Bias;                                                    
-     if(X_balance_error>+30) X_balance_error=+30;                                    
-     if(X_balance_error<-30) X_balance_error=-30;                                    
-     PWM=param.angular_kp*Bias + param.angular_ki*X_balance_error + (gyro)*param.angular_kd;    
-     return PWM;
+     // static float error; // ã€ä¿®æ”¹ã€‘ç§»è‡³å…¨å±€ X_balance_error
+     Bias=Angle-Angle_Zero;
+     X_balance_error += Bias * BALANCE_CONTROL_DT_S;
+     if(X_balance_error > BALANCE_ANGLE_INTEGRAL_LIMIT_DEG_S)
+         X_balance_error = BALANCE_ANGLE_INTEGRAL_LIMIT_DEG_S;
+     if(X_balance_error < -BALANCE_ANGLE_INTEGRAL_LIMIT_DEG_S)
+         X_balance_error = -BALANCE_ANGLE_INTEGRAL_LIMIT_DEG_S;
+     PWM=param.angular_kp*Bias + param.angular_ki*X_balance_error + (gyro)*param.angular_kd;
+     return balance_clamp(PWM,
+                          -BALANCE_RATE_TARGET_LIMIT_DPS,
+                          BALANCE_RATE_TARGET_LIMIT_DPS);
 }
 
-//ËÙ¶È»·pid
+//é€Ÿåº¦ç¯pid
 float Velocity_Control(float encoder,float target_encoder)
 {
-    float encoder_bias,Velocity;
-    // static float encoder_bias_integral; // ¡¾ĞŞ¸Ä¡¿ÒÆÖÁÈ«¾Ö Velocity_encoder_bias_integral
-    encoder_bias = encoder - target_encoder;
-    Velocity_encoder_bias_integral += encoder_bias;
-    if(Velocity_encoder_bias_integral > +200) 
-            Velocity_encoder_bias_integral = +200;                    
-    if(Velocity_encoder_bias_integral < -200) 
-            Velocity_encoder_bias_integral = -200;                    
-    Velocity = encoder_bias * param.fly_wheel_speed_kp + Velocity_encoder_bias_integral * param.fly_wheel_speed_ki/1000;
-    return Velocity;
+    const float encoder_bias = encoder - target_encoder;
+    const bool steering_compensation_active =
+        !steering_allows_zero_learning();
+    if (!steering_compensation_active)
+    {
+        /*
+         * Hand long-term trim back to the persistent dynamic-zero estimator.
+         * At 25 Hz, 0.99 gives a gentle ~4 s decay instead of a roll-target
+         * step when the post-steering settling gate expires.
+         */
+        Velocity_encoder_bias_integral *= 0.99f;
+    }
+    const float candidate_integral = balance_clamp(
+        Velocity_encoder_bias_integral +
+            encoder_bias * BALANCE_WHEEL_CONTROL_DT_S,
+        -BALANCE_WHEEL_INTEGRAL_LIMIT_TPS_S,
+        BALANCE_WHEEL_INTEGRAL_LIMIT_TPS_S);
+    const float proportional_output =
+        encoder_bias * param.fly_wheel_speed_kp;
+    const float candidate_integral_output =
+        candidate_integral * param.fly_wheel_speed_ki;
+    const float candidate_output =
+        proportional_output + candidate_integral_output;
+    const float integral_output_delta =
+        encoder_bias * BALANCE_WHEEL_CONTROL_DT_S *
+        param.fly_wheel_speed_ki;
+    const bool allow_integrator =
+        fabsf(candidate_output) <= BALANCE_WHEEL_BIAS_LIMIT_DEG ||
+        (candidate_output > BALANCE_WHEEL_BIAS_LIMIT_DEG &&
+         integral_output_delta < 0.0f) ||
+        (candidate_output < -BALANCE_WHEEL_BIAS_LIMIT_DEG &&
+         integral_output_delta > 0.0f);
+    if (steering_compensation_active && allow_integrator)
+    {
+        Velocity_encoder_bias_integral = candidate_integral;
+    }
+    return proportional_output +
+           Velocity_encoder_bias_integral * param.fly_wheel_speed_ki;
 }
 
 void balance(void)
 {
     cnt1++;
-    
-    // ËÙ¶È»· 25Hz (20 * 2ms)
-    if(cnt1 >= 20) 
-    {
-        // 1. ¼ÆËãÔ­Ê¼Êä³ö
-        float raw_speed_output = Velocity_Control(odrive.now_speed0, 0);
-        
-        // 2. ¡¾¹Ø¼ü¡¿Èç¹ûÖ®Ç°ÊÇ×§×Åµ¹£¬ÕâÀïÈ¡·´£¡
-        // ÊÔ×Å¼Ó¸ö¸ººÅ£¨-£©¡£Èç¹ûÖ®Ç°ÓĞ¸ººÅ£¬¾ÍÈ¥µô¡£
-        raw_speed_output = -raw_speed_output; 
 
-        // 3. ¡¾¹Ø¼ü¡¿µÍÍ¨ÂË²¨ (Low Pass Filter)
-        // ËÙ¶È»·²»ÒªÍ»±ä£¬ÒªÈí£¡0.9 ÊÇ¾ÉÖµÈ¨ÖØ£¬0.1 ÊÇĞÂÖµÈ¨ÖØ¡£
-        PWM_accel = PWM_accel * 0.9f + raw_speed_output * 0.1f;
-        
+    // é€Ÿåº¦ç¯ 25Hz (20 * 2ms)
+    if(cnt1 >= 20)
+    {
+        if (balance_odrive_ready)
+        {
+            float raw_speed_output = Velocity_Control(odrive.now_speed0, 0);
+            raw_speed_output = -raw_speed_output;
+            wheel_feedback_bias_deg =
+                wheel_feedback_bias_deg * 0.9f + raw_speed_output * 0.1f;
+            PWM_accel = balance_clamp(
+                steering_balance_feedforward_deg() +
+                    wheel_feedback_bias_deg,
+                -BALANCE_WHEEL_BIAS_LIMIT_DEG,
+                BALANCE_WHEEL_BIAS_LIMIT_DEG);
+        }
+
         cnt1 = 0;
-        
-        // 4. ÏŞ·ù (ÀÏÉú³£Ì¸£¬±£ÃüÓÃµÄ)
-        if(PWM_accel > 1.5f) PWM_accel = 1.5f;
-        if(PWM_accel < -1.5f) PWM_accel = -1.5f;
     }
 
-    // Ö±Á¢»· 500Hz
-    // ×¢Òâ£ºÕâÀïÊ¹ÓÃµÄÊÇ¾­¹ı ÂË²¨ ºÍ È¡·´ ºóµÄ PWM_accel
+    // ç›´ç«‹ç¯ 500Hz
     PWM_X = X_balance_Control(imu.rol,
                               balance_monitor_zero_for_control() + PWM_accel,
                               imu.vx);
-    PWM_Final = Angle_Velocity(imu.vx, PWM_X);                                                                                                      
-    
-    odrive.set_speed0 = PWM_Final;                              
-    
+    rate_raw_acceleration_tps2 = Angle_Velocity(imu.vx, PWM_X);
+    const float acceleration_limit_tps2 =
+        balance_select_acceleration_limit_tps2(
+            imu.rol - (balance_monitor_zero_for_control() + PWM_accel),
+            imu.vx,
+            rate_raw_acceleration_tps2);
+    PWM_Final = balance_integrate_acceleration_command(
+        rate_raw_acceleration_tps2,
+        acceleration_limit_tps2,
+        odrive.now_speed0);
+
+    odrive.set_speed0 = PWM_Final;
+    odrive.set_torque0 = 0.0f;
+
 }
 
 int my_abs(int x)

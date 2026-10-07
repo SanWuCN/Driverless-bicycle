@@ -3,13 +3,13 @@
 #include "packet.h"
 
 // 优化点1：加上 volatile，防止编译器优化中断变量
-volatile uint8_t rxbuf; 
+volatile uint8_t rxbuf;
 imu_t imu;
 
 // 优化点2：致命参数修改！！！
 // 原来的 0.03 会导致约 60ms 的信号延迟，平衡车会因为反应慢而必倒。
 // 改为 0.5 (兼顾实时性和滤波)，或者 0.3。绝对不能太小。
-float alpha = 0.5f; 
+float alpha = 0.5f;
 
 float low_pass_filter(float value);
 
@@ -24,16 +24,19 @@ void imu_get(void)
 	imu.pit = id0x91.eul[0];
 	imu.rol = id0x91.eul[1];
 	imu.yaw = id0x91.eul[2];
-	
+	imu.ax = id0x91.acc[0];
+	imu.ay = id0x91.acc[1];
+	imu.az = id0x91.acc[2];
+
 	// 简单的角度归一化处理
 	if(imu.yaw < 0) imu.yaw = id0x91.eul[2] + 360;
-	
+
 	// 获取原始角速度
 	// 注意：平衡车最依赖的是 vx (roll轴角速度)
 	imu.vx = id0x91.gyr[0];
 	imu.vy = id0x91.gyr[1];
-	imu.vz = id0x91.gyr[2];	
-	
+	imu.vz = id0x91.gyr[2];
+
 	// 一阶低通滤波
 	// 现在 alpha 变大了，延迟会小很多，阻尼感会变强
 	imu.vx = low_pass_filter(imu.vx);
@@ -46,7 +49,12 @@ void UART8_IRQHandler(void)
 		rxbuf = LL_USART_ReceiveData8(UART8);
 		packet_decode(rxbuf);
 		// LL库通常不需要手动再次Enable，但保留你的原样
-		LL_USART_EnableIT_RXNE(UART8); 
+		LL_USART_EnableIT_RXNE(UART8);
+	}
+	if (LL_USART_IsActiveFlag_ORE(UART8))
+	{
+		LL_USART_ClearFlag_ORE(UART8);
+		packet_decode_reset();
 	}
 }
 

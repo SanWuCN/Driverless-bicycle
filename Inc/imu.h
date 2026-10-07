@@ -9,6 +9,10 @@ typedef struct
 	float wy;
 	float wz;
 
+	float ax;
+	float ay;
+	float az;
+
 	float vx;
 	float vy;
 	float vz;

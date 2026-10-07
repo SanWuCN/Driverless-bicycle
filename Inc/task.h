@@ -3,40 +3,63 @@
 
 
 #include "main.h"
-//pid²ÎÊı½á¹¹Ìå
-typedef struct 
+//pidå‚æ•°ç»“æ„ä½“
+typedef struct
 {
-		//Æ½ºâ·ÉÂÖ½ÇËÙ¶È»·
+		//å¹³è¡¡é£è½®è§’é€Ÿåº¦ç¯
     float angular_v_kp;
     float angular_v_ki;
     float angular_v_kd;
-		//Æ½ºâ·ÉÂÖ½Ç¶È»·
+		//å¹³è¡¡é£è½®è§’åº¦ç¯
     float angular_kp;
     float angular_ki;
     float angular_kd;
-		//Æ½ºâ·ÉÂÖËÙ¶È»·
+		//å¹³è¡¡é£è½®é€Ÿåº¦ç¯
     float fly_wheel_speed_kp;
     float fly_wheel_speed_ki;
     float fly_wheel_speed_kd;
-	  //Áãµã·ÉÂÖËÙ¶È»·
+	  //é›¶ç‚¹é£è½®é€Ÿåº¦ç¯
 	  float zero_speed_kp;
     float zero_speed_ki;
     float zero_speed_kd;
-	
-    float angular_zero;             //½Ç¶ÈÁãµã
+
+    float angular_zero;             //è§’åº¦é›¶ç‚¹
 		float zer0;
-    float angular_target;           //Ä¿±ê½Ç¶È
-		
+    float angular_target;           //ç›®æ ‡è§’åº¦
+
 		int run_flag;
     int scope_flag;
-		
-    float Steer_Kp;                 //¶æ»úkp
-    float Steer_Ki;                 //¶æ»úki
-    float Steer_Kd;        					//¶æ»úkd
-		
+
+    float Steer_Kp;                 //èˆµæœºkp
+    float Steer_Ki;                 //èˆµæœºki
+    float Steer_Kd;        					//èˆµæœºkd
+
 }paramTypeDef;
 extern paramTypeDef param;
-extern float distance;//»ı·Ö¾àÀë
+extern float distance;//ç§¯åˆ†è·ç¦»
+
+typedef enum
+{
+    BALANCE_TUNING_OK = 0,
+    BALANCE_TUNING_UNKNOWN_PARAMETER,
+    BALANCE_TUNING_OUT_OF_RANGE,
+    BALANCE_TUNING_UNSAFE_STATE
+} BalanceTuningResult;
+
+typedef struct
+{
+    float rate_kp;
+    float rate_ki;
+    float rate_kd;
+    float angle_kp;
+    float angle_ki;
+    float angle_kd;
+    float wheel_kp;
+    float wheel_ki;
+    float steer_kp;
+    float steer_ki;
+    float steer_kd;
+} BalanceTuningParameters;
 
 int my_abs(int x);
 float my_fabs(float x);
@@ -48,5 +71,9 @@ void test_zero_pid(void);
 void test_zero(void);
 void param_init(void);
 void balance(void);
+BalanceTuningResult balance_tuning_set(const char *name,
+                                       float requested_value,
+                                       float *applied_value);
+void balance_tuning_get(BalanceTuningParameters *parameters);
+BalanceTuningResult balance_tuning_revert(void);
 #endif
-

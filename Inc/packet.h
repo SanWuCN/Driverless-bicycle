@@ -12,16 +12,17 @@ typedef struct
 {
     uint32_t ofs;
     uint8_t buf[MAX_PACKET_LEN];    /* total frame buffer */
-    uint16_t payload_len;           
+    uint16_t payload_len;
     uint16_t len;                   /* total frame len */
     uint8_t type;
 }packet_t;
 
 
 /* packet Rx API */
-typedef void (*on_data_received_event)(packet_t *pkt);
+typedef bool (*on_data_received_event)(packet_t *pkt);
 void packet_decode_init(packet_t *pkt, on_data_received_event rx_handler);
 uint32_t packet_decode(uint8_t c);
+void packet_decode_reset(void);
 
 
 #endif

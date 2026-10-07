@@ -6,6 +6,7 @@
 #define MAX_LENGTH 16
 
 extern uint8_t bitmap;
+extern volatile uint32_t acceleration_frame_count;
 
 #define BIT_VALID_ID   (0x01)
 #define BIT_VALID_ACC  (0x02)
@@ -16,7 +17,7 @@ extern uint8_t bitmap;
 #define BIT_VALID_TIME (0x40)
 #define BIT_VALID_ALL  (BIT_VALID_ID | BIT_VALID_ACC | BIT_VALID_GYR | BIT_VALID_MAG | BIT_VALID_EUL | BIT_VALID_QUAT | BIT_VALID_TIME)
 
-__packed typedef  struct  id0x91_t {
+typedef struct __packed id0x91_t {
         uint8_t     tag;                /* 0x91 */
         uint8_t     id;
         uint8_t     rev[6];             /* reserved */
@@ -29,7 +30,7 @@ __packed typedef  struct  id0x91_t {
 
 } id0x91_t;
 
-__packed typedef  struct  id0x62_t {
+typedef struct __packed id0x62_t {
 	uint8_t tag;
 	uint8_t gw_id;
 	uint8_t n;

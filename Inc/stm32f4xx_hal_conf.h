@@ -36,6 +36,16 @@
 #ifndef __STM32F4xx_HAL_CONF_H
 #define __STM32F4xx_HAL_CONF_H
 
+/*
+ * The board uses a 12 MHz HSE.  Define this before including main.h because
+ * the LL/CMSIS headers pulled in by main.h otherwise install the STM32F4
+ * family default (25 MHz) first.  A late #if !defined(HSE_VALUE) block would
+ * then silently keep the wrong value in HAL driver translation units.
+ */
+#if !defined(HSE_VALUE)
+  #define HSE_VALUE    ((uint32_t)12000000U)
+#endif
+
 #ifdef __cplusplus
  extern "C" {
 #endif
@@ -104,10 +114,6 @@
   *        This value is used by the RCC HAL module to compute the system frequency
   *        (when HSE is used as system clock source, directly or through the PLL).
   */
-#if !defined  (HSE_VALUE)
-  #define HSE_VALUE    ((uint32_t)12000000U) /*!< Value of the External oscillator in Hz */
-#endif /* HSE_VALUE */
-
 #if !defined  (HSE_STARTUP_TIMEOUT)
   #define HSE_STARTUP_TIMEOUT    ((uint32_t)100U)   /*!< Time out for HSE start up, in ms */
 #endif /* HSE_STARTUP_TIMEOUT */

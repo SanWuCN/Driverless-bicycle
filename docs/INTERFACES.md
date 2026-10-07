@@ -12,8 +12,8 @@
 | ODrive CAN 发送 | CAN2_TX | PB13 | 250 kbit/s | CAN 收发器 TX |
 | CH100 接收 | UART8_RX | PE0 | 460800 8N1 | CH100 TX |
 | CH100 发送 | UART8_TX | PE1 | 460800 8N1 | CH100 RX |
-| Mac 遥测发送 | UART7_TX | PE8 | 115200 8N1，20 Hz CSV | USB-UART RX |
-| Mac/上位机接收 | UART7_RX | PE7 | 115200 8N1 | USB-UART TX |
+| Mac 遥测发送 | UART7_TX | PE8 | 115200 8N1；默认 20 Hz CRC 紧凑帧 | USB-UART/BLE RX |
+| Mac/上位机接收 | UART7_RX | PE7 | 115200 8N1 | USB-UART/BLE TX |
 | 历史上位机串口 | USART6_TX | PG14 | 默认 115200 8N1 | 旧上位机接口 |
 | 历史上位机串口 | USART6_RX | PG9 | 默认 115200 8N1 | 旧上位机接口 |
 | 舵机 PWM | TIM2_CH3 | PA2 | 50 Hz，当前 580–980 µs | DS5180 信号线 |
@@ -67,7 +67,8 @@ can_id = (node_id << 5) | command_id
 
 - 动量轮速度命令：`odrive.set_speed0` 直接发送到 Axis 0。
 - 后轮速度命令：发送时使用 `-odrive.set_speed1`。
-- 运行状态下当前后轮目标为 `-0.7`，再经过发送处取反；上电 `run_flag = 0`，不允许自行匀速转动。
+- `drive_control`把正前进速度换算为负的`set_speed1`，发送处再取反；上电状态为停止，
+  不允许自行匀速转动。
 
 更换相线、编码器方向、IMU 安装方向或电机安装方向后，必须重新进行悬空、固定车架的方向验证。
 
@@ -87,7 +88,9 @@ can_id = (node_id << 5) | command_id
 - PE8：TX。
 - PE7：RX。
 - 115200 baud，8N1，无硬件流控。
-- 正式固件每 50 ms 输出一条 ASCII CSV，即 20 Hz。
+- 正式固件默认每500 ms只输出一条46字节CRC基础状态帧（约92 byte/s），不包含IMU角度
+  或角速度。收到`TELEM,LIVE`后才输出65字节/20 Hz平衡帧和34字节/约3.3 Hz转向帧。
+- `TELEM,BASIC`返回低带宽模式；`TELEM,FULL`只供有线USB-UART诊断。复位后默认BASIC。
 - UART7 不是 STM32F427 ROM bootloader 支持的下载口，只能用于业务通信/遥测。
 - 使用 ROM 串口下载时应改接 USART1 或 USART3，并正确控制 BOOT0；当前实车更推荐 ST-Link SWD。
 
@@ -106,10 +109,56 @@ Channel   = 3       -> PA2
 `servo_set_duty(duty)` 的参数是相对中心的整数偏移：
 
 ```text
-pulse_us = clamp(780 + duty, 580, 980)
+pulse_us = clamp(1520 + duty, 1370, 1670)
 ```
 
 源码 `servo_init()` 的旧注释写着 PA0，但初始化和 PWM 输出实际均为 TIM2_CH3 / PA2。
+
+只有收到带 CRC 的 UART7 `STEER` 命令后才开始输出 PWM。实车确认中位为
+`1520 µs`，底层机械保护范围为 `1370–1670 µs`；正式 `ANGLE` 模式使用
+`1520 ± 150 µs`。实车方向为：负偏移/较小脉宽右转，正偏移/较大脉宽左转。
+所有正常转向经过最大 `20 µs/s`、`40 µs/s²` 的速度/加速度轨迹限制，完整
+150 µs行程约8秒。3秒内未收到命令或`STEER,KEEP`保活会慢速回中；KEEP不返回回执，
+避免无线链路被周期性确认包占满。
+
+UART7 转向命令沿用 PID 在线调参的 CRC16 帧：
+
+- `STEER,ANGLE,<offset_us>`：正式舵角模式，范围 `-150...+150 µs`；平衡状态下静止和
+  行驶均可用。非零命令必须在 `±50...±150 µs` 且为 `5 µs` 的整数步进；`0` 为回中。
+  回中命令会执行反向越中消隙轨迹。
+- `STEER,HOLD,<heading_deg>`：行驶后的航向 PID；静止时由后轮速度门控禁止输出。
+- `STEER,CAL,<offset_us>`：停驶标定模式，不作为正常控制接口。
+- `STEER,DISABLE`：停止控制并慢速回中；从舵角模式退出时保留消隙回中轨迹。
+
+```text
+@P,<seq>,STEER,ANGLE,<offset_us>,<crc16> # 正式舵角模式，-150..150 µs
+@P,<seq>,STEER,CAL,<offset_us>,<crc16>   # 停驶标定，-150..150 µs
+@P,<seq>,STEER,HOLD,<heading_deg>,<crc16>
+@P,<seq>,STEER,CAPTURE,<crc16>           # 捕获当前 IMU 航向
+@P,<seq>,STEER,DISABLE,<crc16>           # 限速回中
+@P,<seq>,STEER,KEEP,<crc16>              # 无回执保活
+```
+
+`CAL` 只允许后轮停止时使用。`HOLD` 即使收到命令，也只有在平衡已使能、IMU
+新鲜、后轮处于运行状态且 Axis 1 反馈新鲜无故障时才会真正产生转向量。
+
+## 5.1 后轮运动命令
+
+Axis 1保持速度控制模式，STM32把网页的m/s换算为ODrive turns/s。当前沿用原项目标定值
+`0.077 m/turn`，允许速度为`0.05…1.00 m/s`，默认`0.20 m/s`：
+
+```text
+@P,<seq>,DRIVE,MANUAL,<signed_mps>,<crc16> # 正数前进，负数后退
+@P,<seq>,DRIVE,DEMO,<mps>,<crc16>          # 启动循环演示
+@P,<seq>,DRIVE,STOP,<crc16>                # 平滑停止，始终优先
+@P,<seq>,DRIVE,KEEP,<crc16>                # 无回执保活
+```
+
+只有平衡已启动、Axis 1反馈新鲜且未触发倒车保护时才接受运动命令。3秒收不到KEEP、
+安全条件丢失或融合里程显示运动方向与命令相反超过0.10 m时，状态机撤销输出；演示模式
+还会让转向回中。里程由编码器速度与IMU X轴纵向加速度互补融合：正常时编码器约束长期
+漂移，检测到编码器加速度/速度与IMU预测明显不一致时降低编码器权重。IMU加速度无效时
+允许低速手动控制，但拒绝或终止自动演示。
 
 ## 6. I2C OLED
 
