@@ -6,6 +6,8 @@ const state = {
   lastRender: 0, renderPending: false, status: null, sampleTimes: [],
   viewMode: "live", sessionSamples: [], sessionAnalysis: null,
   apiToken: "", portPickerBusy: false,
+  steeringPendingAngle: null, steeringCommandActive: false,
+  steeringDebounce: null,
 };
 
 const colors = { green: "#56d5ee", cyan: "#67d4ff", amber: "#f5c870", violet: "#b8a5ff", red: "#ff7e8c", gray: "#aab9c9" };
@@ -147,53 +149,74 @@ function setSteeringFeedback(message, ok = null) { const el = $("#steering-feedb
 let toastTimer;
 function showToast(message, error = false) { const el = $("#toast"); el.textContent = message; el.className = `toast visible${error ? " error" : ""}`; clearTimeout(toastTimer); toastTimer = setTimeout(() => el.className = "toast", 2600); }
 
-function validateSteering(value) {
-  const rounded = Math.round(Number(value) / 5) * 5;
-  if (!Number.isFinite(rounded) || Math.abs(rounded) > 150) throw new Error("舵角范围为 -150 … +150 µs");
-  if (rounded !== 0 && Math.abs(rounded) < 50) throw new Error("机械死区内不可用；请选择 0 或至少 ±50 µs");
+function validateSteeringAngle(value) {
+  const rounded = Math.round(Number(value) * 2) / 2;
+  if (!Number.isFinite(rounded) || Math.abs(rounded) > 15) throw new Error("转向角范围为 -15° … +15°");
+  if (rounded !== 0 && Math.abs(rounded) < 5) throw new Error("机械死区内不可用；请选择回中或至少 ±5°");
   return rounded;
 }
 
-function steeringIndexToOffset(index) {
+function steeringIndexToAngle(index) {
   const step = Math.max(0, Math.min(42, Math.round(Number(index))));
-  if (step <= 20) return -150 + step * 5;
+  if (step <= 20) return -15 + step * 0.5;
   if (step === 21) return 0;
-  return 50 + (step - 22) * 5;
+  return 5 + (step - 22) * 0.5;
 }
 
-function steeringOffsetToIndex(offset) {
-  const value = validateSteering(offset);
-  if (value < 0) return (value + 150) / 5;
+function steeringAngleToIndex(angle) {
+  const value = validateSteeringAngle(angle);
+  if (value < 0) return (value + 15) / 0.5;
   if (value === 0) return 21;
-  return 22 + (value - 50) / 5;
+  return 22 + (value - 5) / 0.5;
 }
 
 function updateSteeringSliderLabel() {
-  const offset = steeringIndexToOffset($("#steering-slider").value);
-  $("#steering-slider-value").textContent = offset === 0 ? "回中 · 0 µs" : `${offset > 0 ? "左" : "右"} ${Math.abs(offset)} µs`;
+  const angle = steeringIndexToAngle($("#steering-slider").value);
+  $("#steering-slider-value").textContent = angle === 0 ? "回中 · 0.0°" : `${angle > 0 ? "左" : "右"} ${Math.abs(angle).toFixed(1)}°`;
 }
 
 function setSteeringBusy(busy) {
   const panel = document.querySelector(".steering-panel");
   panel.setAttribute("aria-busy", String(busy));
-  panel.querySelectorAll("button,input").forEach(control => { control.disabled = busy; });
 }
 
-async function commandSteering(value) {
-  let offset;
-  try { offset = validateSteering(value); }
-  catch (error) { setSteeringFeedback(error.message, false); showToast(error.message, true); return; }
-  setSteeringFeedback(offset === 0 ? "正在平滑回中…" : `正在设置 ${offset > 0 ? "左" : "右"} ${Math.abs(offset)} µs…`);
+async function flushSteeringCommand() {
+  if (state.steeringCommandActive || state.steeringPendingAngle === null) return;
+  const angle = state.steeringPendingAngle;
+  state.steeringPendingAngle = null;
+  state.steeringCommandActive = true;
+  setSteeringFeedback(angle === 0 ? "正在平滑回中…" : `正在平滑转向至${angle > 0 ? "左" : "右"} ${Math.abs(angle).toFixed(1)}°…`);
   setSteeringBusy(true);
   try {
-    const result = await post("/api/steering", { offset_us: offset });
-    if (state.status) state.status.steering_target_us = offset;
-    $("#steering-slider").value = String(steeringOffsetToIndex(offset));
-    updateSteeringSliderLabel();
-    setSteeringFeedback(result.reply, true);
-    showToast(offset === 0 ? "已开始平滑回中" : `转向目标已设为 ${offset > 0 ? "左" : "右"} ${Math.abs(offset)} µs`);
-  } catch (error) { setSteeringFeedback(error.message, false); showToast(error.message, true); }
-  finally { setSteeringBusy(false); }
+    await post("/api/steering", { angle_deg: angle });
+    if (state.status) {
+      state.status.steering_target_deg = angle;
+      state.status.steering_target_us = angle * 10;
+    }
+    setSteeringFeedback(angle === 0 ? "正在平滑回中" : `目标已更新：${angle > 0 ? "左" : "右"} ${Math.abs(angle).toFixed(1)}°`, true);
+  } catch (error) {
+    setSteeringFeedback(error.message, false);
+    showToast(error.message, true);
+  } finally {
+    state.steeringCommandActive = false;
+    setSteeringBusy(false);
+    if (state.steeringPendingAngle !== null && Math.abs(state.steeringPendingAngle - angle) < 0.01) {
+      state.steeringPendingAngle = null;
+    }
+    if (state.steeringPendingAngle !== null) flushSteeringCommand();
+  }
+}
+
+function commandSteering(value, debounce = false) {
+  let angle;
+  try { angle = validateSteeringAngle(value); }
+  catch (error) { setSteeringFeedback(error.message, false); showToast(error.message, true); return; }
+  $("#steering-slider").value = String(steeringAngleToIndex(angle));
+  updateSteeringSliderLabel();
+  state.steeringPendingAngle = angle;
+  clearTimeout(state.steeringDebounce);
+  if (debounce) state.steeringDebounce = setTimeout(flushSteeringCommand, 140);
+  else flushSteeringCommand();
 }
 
 function setDriveBusy(busy) {
@@ -267,14 +290,15 @@ function renderStatus(status) {
   $("#metric-current").textContent = signed(o.iq_measured_a, 1); $("#metric-vbus").textContent = fmt(o.vbus_v, 1);
   renderFlags(detailed ? (b.flag_names || []) : [armed ? "CONTROL_ARMED" : "CONTROL_IDLE", fall ? "FALL_DISARM" : "BASIC_TELEMETRY"]); renderHardware(o);
   const steering = status.steering || {};
-  const steeringTarget = Number(status.steering_target_us ?? 0);
-  const steeringOutput = Number(steering.commanded_offset_us);
-  $("#steering-target").textContent = signed(steeringTarget, 0);
-  $("#steering-output").textContent = signed(steeringOutput, 1);
-  $("#steering-pulse").textContent = Number.isFinite(Number(steering.pulse_us)) ? fmt(steering.pulse_us, 0) : "--";
+  const steeringTarget = Number(status.steering_target_deg ?? (Number(status.steering_target_us ?? 0) / 10));
+  const steeringOutput = Number(steering.commanded_offset_us) / 10;
+  const steeringFlags = Number(steering.flags || 0);
+  $("#steering-target").textContent = signed(steeringTarget, 1);
+  $("#steering-output").textContent = Number.isFinite(steeringOutput) ? signed(steeringOutput, 1) : "--";
+  $("#steering-motion").textContent = (steeringFlags & (1 << 9)) ? "消隙回中" : (steeringFlags & (1 << 4)) ? "平滑转向" : Number.isFinite(steeringOutput) ? "已到位" : "--";
   $("#steering-direction").textContent = steeringTarget > 0 ? "左转" : steeringTarget < 0 ? "右转" : "回中";
   if (document.activeElement !== $("#steering-slider")) {
-    try { $("#steering-slider").value = String(steeringOffsetToIndex(steeringTarget)); updateSteeringSliderLabel(); } catch (_) {}
+    try { $("#steering-slider").value = String(steeringAngleToIndex(steeringTarget)); updateSteeringSliderLabel(); } catch (_) {}
   }
   const drive = status.drive || {};
   const driveMode = Number(drive.mode ?? 0);
@@ -287,7 +311,7 @@ function renderStatus(status) {
   const driveFlags = Number(drive.flags || 0);
   $("#drive-fusion").textContent = (driveFlags & (1 << 9)) ? "IMU + 编码器" : "里程融合未就绪";
   $("#drive-safety").textContent = !uartFresh ? "等待车辆连接" : (driveFlags & (1 << 10)) ? "检测到打滑" : (driveFlags & (1 << 2)) ? "运动锁定" : "运动就绪";
-  const phaseNames = ["演示未运行", "直行 2 m", "停稳", "右转 150", "右转等待 5 s", "右转回中", "左转 150", "左转等待 5 s", "前进 1 m", "后退 1 m", "回中", "倒车 2 m"];
+  const phaseNames = ["演示未运行", "直行 2 m", "停稳", "右转 15°", "右转等待 5 s", "右转回中", "左转 15°", "左转等待 5 s", "前进 1 m", "后退 1 m", "回中", "倒车 2 m"];
   $("#demo-phase").textContent = phaseNames[Number(drive.demo_phase ?? 0)] || "未知阶段";
   $("#demo-cycles").textContent = `${Number(drive.demo_cycle_count || 0)} 组`;
   const driveFresh = status.uart_connected && status.uart_age_ms < 1200;
@@ -424,9 +448,11 @@ $("#return-live").addEventListener("click", showLiveView);
 $("#refresh-params").addEventListener("click", async () => { try { const r = await post("/api/tune", {action:"get"}); setFeedback(r.reply, true); } catch (e) { setFeedback(e.message, false); } });
 $("#apply-all").addEventListener("click", applyAll);
 $("#revert-button").addEventListener("click", async () => { if (!confirm("恢复全部 PID 为固件编译默认值？该操作会立即影响控制。")) return; try { const r = await post("/api/tune", {action:"revert"}); state.dirty.clear(); document.querySelectorAll(".pid-input").forEach(el => el.classList.remove("dirty")); setFeedback(r.reply, true); } catch(e) { setFeedback(e.message, false); } });
-document.querySelectorAll("[data-steer]").forEach(button => button.addEventListener("click", () => commandSteering(Number(button.dataset.steer))));
-$("#steering-slider").addEventListener("input", updateSteeringSliderLabel);
-$("#steering-apply").addEventListener("click", () => commandSteering(steeringIndexToOffset($("#steering-slider").value)));
+document.querySelectorAll("[data-steer-angle]").forEach(button => button.addEventListener("click", () => commandSteering(Number(button.dataset.steerAngle))));
+$("#steering-slider").addEventListener("input", () => {
+  updateSteeringSliderLabel();
+  commandSteering(steeringIndexToAngle($("#steering-slider").value), true);
+});
 $("#drive-speed-slider").addEventListener("input", event => { $("#drive-speed-value").textContent = `${Number(event.target.value).toFixed(2)} m/s`; });
 $("#drive-forward").addEventListener("click", () => commandDrive("manual"));
 $("#drive-reverse").addEventListener("click", () => commandDrive("reverse"));

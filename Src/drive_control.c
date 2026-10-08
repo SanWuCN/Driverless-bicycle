@@ -10,15 +10,17 @@
 
 /* Historical bicycle calibration: one Axis-1 motor turn advances 0.077 m. */
 #define DRIVE_METERS_PER_MOTOR_TURN       0.077f
-#define DRIVE_MIN_SPEED_MPS               0.05f
-#define DRIVE_MAX_SPEED_MPS               1.00f
-#define DRIVE_DEFAULT_SPEED_MPS           0.20f
-#define DRIVE_ACCEL_LIMIT_MPS2            0.40f
-#define DRIVE_DECEL_LIMIT_MPS2            0.80f
+#define DRIVE_MIN_SPEED_MPS               0.01f
+#define DRIVE_MAX_SPEED_MPS               0.10f
+#define DRIVE_DEFAULT_SPEED_MPS           0.03f
+#define DRIVE_ACCEL_LIMIT_MPS2            0.025f
+#define DRIVE_DECEL_LIMIT_MPS2             0.05f
+#define DRIVE_JERK_LIMIT_MPS3               0.10f
+#define DRIVE_SPEED_RESPONSE_S              0.40f
 #define DRIVE_COMMAND_TIMEOUT_MS          3000u
 #define DRIVE_UPDATE_MAX_ELAPSED_MS        20u
 #define DRIVE_DISTANCE_TOLERANCE_M         0.03f
-#define DRIVE_STOP_SPEED_MPS               0.04f
+#define DRIVE_STOP_SPEED_MPS              0.005f
 #define DRIVE_DIRECTION_ERROR_M            0.10f
 #define DRIVE_DEMO_STEER_SETTLE_US          2.0f
 #define DRIVE_DEMO_STEER_WAIT_MS           5000u
@@ -29,14 +31,15 @@
 #define DRIVE_ACCEL_BIAS_TAU_S             2.00f
 #define DRIVE_FUSION_ENCODER_GAIN          0.08f
 #define DRIVE_FUSION_SLIP_GAIN             0.01f
-#define DRIVE_SLIP_SPEED_ERROR_MPS         0.25f
-#define DRIVE_SLIP_ACCEL_ERROR_MPS2        1.50f
+#define DRIVE_SLIP_SPEED_ERROR_MPS        0.025f
+#define DRIVE_SLIP_ACCEL_ERROR_MPS2        0.30f
 
 static volatile DriveTelemetry drive_telemetry;
 static DriveMode requested_mode;
 static DriveDemoPhase demo_phase;
 static float requested_speed_mps;
 static float output_speed_mps;
+static float output_acceleration_mps2;
 static float fused_speed_mps;
 static float fused_odometry_m;
 static float segment_start_m;
@@ -86,6 +89,45 @@ static float move_towards(float current, float target, float maximum_step)
         return current - maximum_step;
     }
     return target;
+}
+
+static float update_speed_profile(float target_speed_mps,
+                                  float elapsed_s)
+{
+    if (elapsed_s <= 0.0f)
+    {
+        return output_speed_mps;
+    }
+
+    const float speed_error_mps = target_speed_mps - output_speed_mps;
+    if (fabsf(speed_error_mps) < 0.0005f)
+    {
+        output_acceleration_mps2 = 0.0f;
+        return target_speed_mps;
+    }
+
+    const bool increasing_magnitude =
+        fabsf(target_speed_mps) > fabsf(output_speed_mps);
+    const float acceleration_limit_mps2 = increasing_magnitude
+                                              ? DRIVE_ACCEL_LIMIT_MPS2
+                                              : DRIVE_DECEL_LIMIT_MPS2;
+    const float desired_acceleration_mps2 = clamp_float(
+        speed_error_mps / DRIVE_SPEED_RESPONSE_S,
+        -acceleration_limit_mps2,
+        acceleration_limit_mps2);
+    output_acceleration_mps2 = move_towards(
+        output_acceleration_mps2,
+        desired_acceleration_mps2,
+        DRIVE_JERK_LIMIT_MPS3 * elapsed_s);
+
+    const float next_speed_mps = output_speed_mps +
+                                 output_acceleration_mps2 * elapsed_s;
+    if ((target_speed_mps - next_speed_mps) * speed_error_mps <= 0.0f)
+    {
+        output_acceleration_mps2 = 0.0f;
+        return target_speed_mps;
+    }
+    return next_speed_mps;
 }
 
 static bool drive_safe(void)
@@ -291,6 +333,7 @@ void drive_control_init(void)
     demo_phase = DRIVE_DEMO_IDLE;
     requested_speed_mps = DRIVE_DEFAULT_SPEED_MPS;
     output_speed_mps = 0.0f;
+    output_acceleration_mps2 = 0.0f;
     fused_speed_mps = 0.0f;
     fused_odometry_m = 0.0f;
     segment_start_m = 0.0f;
@@ -496,15 +539,16 @@ void drive_control_update(float rear_position_turns,
     }
 
     const float previous_output_mps = output_speed_mps;
-    const float limit_mps2 = fabsf(target_speed_mps) <
-                                     fabsf(output_speed_mps)
-                                 ? DRIVE_DECEL_LIMIT_MPS2
-                                 : DRIVE_ACCEL_LIMIT_MPS2;
-    output_speed_mps = unsafe_drive
-                           ? 0.0f
-                           : move_towards(output_speed_mps,
-                                          target_speed_mps,
-                                          limit_mps2 * elapsed_s);
+    if (unsafe_drive)
+    {
+        output_speed_mps = 0.0f;
+        output_acceleration_mps2 = 0.0f;
+    }
+    else
+    {
+        output_speed_mps = update_speed_profile(target_speed_mps,
+                                                elapsed_s);
+    }
     if (fabsf(output_speed_mps) < 0.001f &&
         fabsf(target_speed_mps) < 0.001f)
     {
@@ -544,8 +588,7 @@ void drive_control_update(float rear_position_turns,
     {
         flags |= DRIVE_FLAG_DEMO_ACTIVE;
     }
-    if (fabsf(previous_output_mps - target_speed_mps) >
-        (limit_mps2 * elapsed_s + 0.0001f))
+    if (fabsf(previous_output_mps - target_speed_mps) > 0.0005f)
     {
         flags |= DRIVE_FLAG_SPEED_SLEW_LIMITED;
     }

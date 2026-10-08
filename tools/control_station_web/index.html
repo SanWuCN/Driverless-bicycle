@@ -55,23 +55,22 @@
           <span class="steering-direction" id="steering-direction">回中</span>
         </div>
         <div class="steering-readout">
-          <div><span>目标偏移</span><strong id="steering-target">0</strong><small>µs</small></div>
-          <div><span>平滑输出</span><strong id="steering-output">--</strong><small>µs</small></div>
-          <div><span>PWM</span><strong id="steering-pulse">--</strong><small>µs</small></div>
+          <div><span>目标角度</span><strong id="steering-target">0.0</strong><small>°</small></div>
+          <div><span>平滑输出</span><strong id="steering-output">--</strong><small>°</small></div>
+          <div><span>轨迹状态</span><strong id="steering-motion">--</strong></div>
         </div>
         <div class="steering-presets" aria-label="转向预设">
-          <button class="steer-button" type="button" data-steer="150">左 150</button>
-          <button class="steer-button" type="button" data-steer="100">左 100</button>
-          <button class="steer-button center" type="button" data-steer="0">回中</button>
-          <button class="steer-button" type="button" data-steer="-100">右 100</button>
-          <button class="steer-button" type="button" data-steer="-150">右 150</button>
+          <button class="steer-button" type="button" data-steer-angle="15">左 15°</button>
+          <button class="steer-button" type="button" data-steer-angle="10">左 10°</button>
+          <button class="steer-button center" type="button" data-steer-angle="0">回中</button>
+          <button class="steer-button" type="button" data-steer-angle="-10">右 10°</button>
+          <button class="steer-button" type="button" data-steer-angle="-15">右 15°</button>
         </div>
         <div class="steering-fine">
-          <div class="range-heading"><span>右 150</span><output id="steering-slider-value">回中 · 0 µs</output><span>左 150</span></div>
-          <input id="steering-slider" type="range" min="0" max="42" step="1" value="21" aria-label="舵角精调滑块，每格 5 微秒">
-          <button class="button primary" id="steering-apply" type="button">执行</button>
+          <div class="range-heading"><span>右 15°</span><output id="steering-slider-value">回中 · 0.0°</output><span>左 15°</span></div>
+          <input id="steering-slider" type="range" min="0" max="42" step="1" value="21" aria-label="转向角滑块，每格 0.5 度，拖动后自动平滑转向">
         </div>
-        <div class="inline-spec"><span>步进 5 µs</span><span>死区 ±50 µs</span><span>范围 ±150 µs</span></div>
+        <div class="inline-spec"><span>步进 0.5°</span><span>死区 ±5°</span><span>范围 ±15°</span></div>
         <p class="command-feedback" id="steering-feedback" aria-live="polite">等待转向指令</p>
       </section>
 
@@ -87,8 +86,8 @@
           <div><span>里程</span><strong id="drive-odometry">0.00</strong><small>m</small></div>
         </div>
         <div class="drive-speed-control">
-          <div class="range-heading"><span>低速 0.05</span><output id="drive-speed-value">0.20 m/s</output><span>最快 1.00</span></div>
-          <input id="drive-speed-slider" type="range" min="0.05" max="1" step="0.05" value="0.2" aria-label="后轮速度，单位米每秒">
+          <div class="range-heading"><span>低速 0.01</span><output id="drive-speed-value">0.03 m/s</output><span>最快 0.10</span></div>
+          <input id="drive-speed-slider" type="range" min="0.01" max="0.10" step="0.01" value="0.03" aria-label="后轮速度，0.01 到 0.10 米每秒，每格 0.01 米每秒">
         </div>
         <div class="drive-actions">
           <button class="drive-command" id="drive-forward" type="button">前进</button>

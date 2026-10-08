@@ -55,6 +55,13 @@ STATIC_ROOT = ROOT / "tools" / "control_station_web"
 LOG_ROOT = (Path.home() / "Documents" / "BikeControlStation" / "logs"
             if getattr(sys, "frozen", False) else ROOT / "logs")
 
+# UI-level steering calibration. The verified firmware protocol remains in
+# microseconds; the operator-facing command angle uses 10 us per degree.
+STEERING_US_PER_DEG = 10.0
+STEERING_ANGLE_STEP_DEG = 0.5
+STEERING_ANGLE_DEADBAND_DEG = 5.0
+STEERING_ANGLE_LIMIT_DEG = 15.0
+
 PARAMETER_GROUPS: dict[str, list[dict[str, Any]]] = {
     "rate": [
         {"name": "RATE_KP", "label": "Kp", "min": -40.0, "max": -0.5, "step": 0.1},
@@ -880,6 +887,23 @@ class ControlStation:
             raise ValueError("机械死区为 50 µs；非零舵角必须至少为 ±50 µs")
         return rounded
 
+    @staticmethod
+    def _validate_steering_angle(angle_deg: float) -> float:
+        if not math.isfinite(angle_deg):
+            raise ValueError("转向角必须是有限数值")
+        rounded = round(angle_deg / STEERING_ANGLE_STEP_DEG) * STEERING_ANGLE_STEP_DEG
+        if abs(angle_deg - rounded) > 1e-6:
+            raise ValueError("转向角只能按 0.5° 步进")
+        if abs(rounded) > STEERING_ANGLE_LIMIT_DEG:
+            raise ValueError("转向角范围为 -15° … +15°")
+        if 0.0 < abs(rounded) < STEERING_ANGLE_DEADBAND_DEG:
+            raise ValueError("机械死区为 5°；请选择回中或至少 ±5°")
+        return rounded
+
+    def set_steering_angle(self, angle_deg: float) -> str:
+        angle_deg = self._validate_steering_angle(angle_deg)
+        return self.set_steering_offset(angle_deg * STEERING_US_PER_DEG)
+
     def set_steering_offset(self, offset_us: float) -> str:
         offset_us = self._validate_steering_offset(offset_us)
         with self.lock:
@@ -907,7 +931,11 @@ class ControlStation:
         with self.lock:
             self.steering_target_us = offset_us
         direction = "左" if offset_us > 0.0 else "右"
-        self.add_event("ok", f"转向保持：{direction} {abs(offset_us):.0f} µs", "steering")
+        self.add_event(
+            "ok",
+            f"转向保持：{direction} {abs(offset_us / STEERING_US_PER_DEG):.1f}°",
+            "steering",
+        )
         return reply
 
     def _confirm_steering_target(self, target_us: float, since_s: float, timeout: float = 1.0) -> bool:
@@ -955,10 +983,10 @@ class ControlStation:
         if speed_mps is None or not math.isfinite(speed_mps):
             raise ValueError("速度必须是有限数值")
         if action == "manual":
-            if abs(speed_mps) < 0.05 or abs(speed_mps) > 1.0:
-                raise ValueError("手动速度范围为 ±0.05 … ±1.00 m/s")
-        elif speed_mps < 0.05 or speed_mps > 1.0:
-            raise ValueError("演示速度范围为 0.05 … 1.00 m/s")
+            if abs(speed_mps) < 0.01 or abs(speed_mps) > 0.10:
+                raise ValueError("手动速度范围为 ±0.01 … ±0.10 m/s")
+        elif speed_mps < 0.01 or speed_mps > 0.10:
+            raise ValueError("演示速度范围为 0.01 … 0.10 m/s")
 
         subcommand = "MANUAL" if action == "manual" else "DEMO"
         try:
@@ -1043,6 +1071,10 @@ class ControlStation:
                 "drive": drive,
                 "basic": basic,
                 "steering_target_us": self.steering_target_us,
+                "steering_target_deg": (
+                    self.steering_target_us / STEERING_US_PER_DEG
+                    if self.steering_target_us is not None else 0.0
+                ),
                 "drive_target_speed_mps": self.drive_target_speed_mps,
                 "drive_mode": self.drive_mode,
                 "telemetry_mode": self.telemetry_mode,
@@ -1233,13 +1265,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "reply": reply})
                 return
             if parsed.path == "/api/steering":
-                offset_us = float(payload.get("offset_us"))
-                reply = self.station.set_steering_offset(offset_us)
+                angle_deg = float(payload.get("angle_deg"))
+                reply = self.station.set_steering_angle(angle_deg)
                 self._json(
                     {
                         "ok": True,
                         "reply": reply,
-                        "target_us": self.station.steering_target_us,
+                        "target_angle_deg": angle_deg,
                     }
                 )
                 return
