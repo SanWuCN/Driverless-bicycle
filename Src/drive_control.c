@@ -8,8 +8,8 @@
 #include <math.h>
 #include <string.h>
 
-/* Historical bicycle calibration: one Axis-1 motor turn advances 0.077 m. */
-#define DRIVE_METERS_PER_MOTOR_TURN       0.077f
+/* Ground calibration: 0.70 m reported for 2.00 m travelled (2026-10-08). */
+#define DRIVE_METERS_PER_MOTOR_TURN       0.220f
 #define DRIVE_MIN_SPEED_MPS               0.01f
 #define DRIVE_MAX_SPEED_MPS               0.10f
 #define DRIVE_DEFAULT_SPEED_MPS           0.03f
