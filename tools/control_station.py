@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import dataclasses
+import errno
 import io
 import json
 import math
@@ -27,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 
 from balance_telemetry import (
     FLAG_NAMES,
@@ -1364,18 +1366,37 @@ def main() -> int:
     if args.odrive_rate <= 0 or args.odrive_rate > 100:
         parser.error("--odrive-rate must be in (0, 100]")
     station = ControlStation(args.port, args.history_seconds, args.odrive_rate)
+    dashboard_url = f"http://{args.host}:{args.http_port}"
+    try:
+        server = ControlStationServer((args.host, args.http_port), station)
+    except OSError as error:
+        address_in_use = error.errno in {errno.EADDRINUSE, 10048}
+        if not address_in_use:
+            raise
+        try:
+            with urlopen(f"{dashboard_url}/api/bootstrap", timeout=1.5) as response:
+                existing = json.loads(response.read().decode("utf-8"))
+            if "status" not in existing or "parameter_groups" not in existing:
+                raise RuntimeError("端口由其他程序占用")
+        except Exception as probe_error:
+            raise RuntimeError(
+                f"端口 {args.http_port} 已被其他程序占用，且不是自行车控制站"
+            ) from probe_error
+        webbrowser.open(dashboard_url)
+        print(f"Bike Control Station is already running: {dashboard_url}")
+        return 0
+
     station.start()
-    server = ControlStationServer((args.host, args.http_port), station)
 
     def stop_handler(_signum: int, _frame: Any) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, stop_handler)
     signal.signal(signal.SIGTERM, stop_handler)
-    print(f"Bike Control Station: http://{args.host}:{args.http_port}")
+    print(f"Bike Control Station: {dashboard_url}")
     print(f"UART7: {args.port or 'select in dashboard'}; ODrive polling: {args.odrive_rate:g} Hz")
     if args.open_browser or getattr(sys, "frozen", False):
-        threading.Timer(0.5, webbrowser.open, args=(f"http://{args.host}:{args.http_port}",)).start()
+        threading.Timer(0.5, webbrowser.open, args=(dashboard_url,)).start()
     try:
         server.serve_forever(poll_interval=0.25)
     finally:

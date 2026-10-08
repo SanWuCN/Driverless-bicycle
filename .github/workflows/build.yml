@@ -29,3 +29,27 @@ jobs:
             build/debug/bike.hex
             build/debug/bike.bin
             build/debug/bike.map
+
+  windows-control-station:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-control-station.txt
+
+      - name: Build Windows application
+        shell: pwsh
+        run: ./tools/build_control_station_windows.ps1
+
+      - name: Upload Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: BikeControlStation-Windows-x64
+          path: dist/BikeControlStation-Windows-x64.zip
+          if-no-files-found: error

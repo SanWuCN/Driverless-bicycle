@@ -10,6 +10,8 @@
 - 后轮前进/后退/停止与循环演示已把速度范围收窄到 `0.01…0.10 m/s`、默认
   `0.03 m/s`，并加入限加加速度 S 曲线；启动器支持 macOS/Windows，macOS arm64
   独立应用已在本机打包并验证本地 HTTP/API 与静态页面可启动。
+- 已加入 Windows x64 PyInstaller 自动打包任务，GitHub Actions 产物为
+  `BikeControlStation-Windows-x64.zip`；重复启动会复用现有控制站页面。
 - 后轮演示使用 Axis 1 编码器速度与 IMU 纵向加速度的互补融合，带打滑判别；失去平衡许可、
   后轮反馈、IMU 加速度（演示模式）或命令保活时撤销输出。方向、轮径、IMU 轴向、
   2 m/1 m 距离以及循环演示仍需要固定悬空、然后低速地面实测。

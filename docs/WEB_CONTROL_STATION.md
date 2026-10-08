@@ -50,6 +50,18 @@ Intel 与 Apple Silicon 需分别在对应架构构建；当前为未签名/未�
 数据与控制只在 `127.0.0.1:8765` 提供，不向外网发布；应用日志存于
 `~/Documents/BikeControlStation/logs/`。
 
+### Windows 免安装版
+
+仓库的 GitHub Actions 会在真正的 Windows x64 环境运行
+`tools/build_control_station_windows.ps1`，生成构建产物
+`BikeControlStation-Windows-x64.zip`。在仓库的 **Actions → firmware-build →
+Artifacts** 下载后解压，双击目录内的 `BikeControlStation.exe` 即可；无需另外安装
+Python。首次连接 USB-UART 或 ODrive 时仍需安装对应的 Windows USB 驱动。
+
+如果控制站已经在后台运行，再次双击应用会直接打开现有的
+`http://127.0.0.1:8765`，不会再因为端口占用而静默退出。若该端口被其他软件占用，
+应用会拒绝复用，避免误打开无关服务。
+
 ## 功能
 
 - 同步显示横滚角、控制误差、动态零点、角速度、目标角速度、轮速、速度指令、原始/限幅加速度、角速度环 P/I/D 分项、ODrive 电流和母线数据。
