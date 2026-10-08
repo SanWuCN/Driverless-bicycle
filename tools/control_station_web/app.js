@@ -309,7 +309,7 @@ function renderStatus(status) {
   $("#drive-actual").textContent = signed(drive.actual_speed_mps, 2);
   $("#drive-odometry").textContent = signed(drive.odometry_m, 2);
   const driveFlags = Number(drive.flags || 0);
-  $("#drive-fusion").textContent = (driveFlags & (1 << 9)) ? "IMU + 编码器" : "里程融合未就绪";
+  $("#drive-fusion").textContent = (driveFlags & (1 << 9)) ? "后轮编码器里程" : "编码器里程未就绪";
   $("#drive-safety").textContent = !uartFresh ? "等待车辆连接" : (driveFlags & (1 << 10)) ? "检测到打滑" : (driveFlags & (1 << 2)) ? "运动锁定" : "运动就绪";
   const phaseNames = ["演示未运行", "直行 2 m", "停稳", "右转 15°", "右转等待 5 s", "右转回中", "左转 15°", "左转等待 5 s", "前进 1 m", "后退 1 m", "回中", "倒车 2 m"];
   $("#demo-phase").textContent = phaseNames[Number(drive.demo_phase ?? 0)] || "未知阶段";

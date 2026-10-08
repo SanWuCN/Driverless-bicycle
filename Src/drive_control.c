@@ -29,10 +29,8 @@
 #define DRIVE_IMU_FORWARD_SIGN             1.0f
 #define DRIVE_ACCEL_FILTER_TAU_S           0.08f
 #define DRIVE_ACCEL_BIAS_TAU_S             2.00f
-#define DRIVE_FUSION_ENCODER_GAIN          0.08f
-#define DRIVE_FUSION_SLIP_GAIN             0.01f
-#define DRIVE_SLIP_SPEED_ERROR_MPS        0.025f
 #define DRIVE_SLIP_ACCEL_ERROR_MPS2        0.30f
+#define DRIVE_ENCODER_DELTA_LIMIT_TURNS     0.50f
 
 static volatile DriveTelemetry drive_telemetry;
 static DriveMode requested_mode;
@@ -40,8 +38,8 @@ static DriveDemoPhase demo_phase;
 static float requested_speed_mps;
 static float output_speed_mps;
 static float output_acceleration_mps2;
-static float fused_speed_mps;
-static float fused_odometry_m;
+static float encoder_odometry_m;
+static float previous_encoder_position_turns;
 static float segment_start_m;
 static float segment_target_m;
 static float segment_direction;
@@ -57,7 +55,6 @@ static uint16_t demo_cycle_count;
 static bool position_initialized;
 static bool balance_ready_cached;
 static bool rear_feedback_cached;
-static bool imu_accel_ready_cached;
 static bool fall_disarmed_cached;
 static bool command_timeout_latched;
 static bool direction_mismatch_latched;
@@ -142,7 +139,7 @@ static void begin_distance_phase(DriveDemoPhase phase,
                                  uint32_t now_ms)
 {
     demo_phase = phase;
-    segment_start_m = fused_odometry_m;
+    segment_start_m = encoder_odometry_m;
     segment_direction = direction;
     segment_target_m = distance_m;
     phase_started_ms = now_ms;
@@ -150,7 +147,7 @@ static void begin_distance_phase(DriveDemoPhase phase,
 
 static float segment_progress_m(void)
 {
-    return segment_direction * (fused_odometry_m - segment_start_m);
+    return segment_direction * (encoder_odometry_m - segment_start_m);
 }
 
 static bool steering_reached(float target_us)
@@ -199,6 +196,7 @@ static bool distance_phase_complete(float actual_speed_mps)
 {
     return segment_progress_m() >=
                (segment_target_m - DRIVE_DISTANCE_TOLERANCE_M) &&
+           fabsf(output_speed_mps) <= 0.001f &&
            fabsf(actual_speed_mps) <= DRIVE_STOP_SPEED_MPS;
 }
 
@@ -334,8 +332,8 @@ void drive_control_init(void)
     requested_speed_mps = DRIVE_DEFAULT_SPEED_MPS;
     output_speed_mps = 0.0f;
     output_acceleration_mps2 = 0.0f;
-    fused_speed_mps = 0.0f;
-    fused_odometry_m = 0.0f;
+    encoder_odometry_m = 0.0f;
+    previous_encoder_position_turns = 0.0f;
     segment_start_m = 0.0f;
     segment_target_m = 0.0f;
     segment_direction = 0.0f;
@@ -347,7 +345,6 @@ void drive_control_init(void)
     position_initialized = false;
     balance_ready_cached = false;
     rear_feedback_cached = false;
-    imu_accel_ready_cached = false;
     fall_disarmed_cached = false;
     command_timeout_latched = false;
     direction_mismatch_latched = false;
@@ -382,20 +379,34 @@ void drive_control_update(float rear_position_turns,
                                 : 0.0f;
     balance_ready_cached = balance_armed;
     rear_feedback_cached = rear_feedback_ready;
-    imu_accel_ready_cached = imu_accel_ready;
     fall_disarmed_cached = fall_disarmed;
 
     const float wheel_speed_mps = rear_speed_tps *
                                   DRIVE_METERS_PER_MOTOR_TURN;
-    if (rear_feedback_ready && isfinite(rear_position_turns) &&
-        isfinite(wheel_speed_mps))
+    const bool fresh_encoder_sample = rear_feedback_ready &&
+        rear_feedback_ms != 0u &&
+        rear_feedback_ms != previous_rear_feedback_ms &&
+        isfinite(rear_position_turns) &&
+        isfinite(wheel_speed_mps);
+    if (fresh_encoder_sample)
     {
         if (!position_initialized)
         {
             position_initialized = true;
-            fused_speed_mps = wheel_speed_mps;
+            previous_encoder_position_turns = rear_position_turns;
             previous_wheel_speed_mps = wheel_speed_mps;
             previous_rear_feedback_ms = rear_feedback_ms;
+        }
+        else
+        {
+            const float delta_turns = rear_position_turns -
+                                      previous_encoder_position_turns;
+            if (fabsf(delta_turns) <= DRIVE_ENCODER_DELTA_LIMIT_TURNS)
+            {
+                encoder_odometry_m += delta_turns *
+                                      DRIVE_METERS_PER_MOTOR_TURN;
+            }
+            previous_encoder_position_turns = rear_position_turns;
         }
     }
 
@@ -431,7 +442,6 @@ void drive_control_update(float rear_position_turns,
             filtered_accel_mps2 += accel_alpha *
                                    (linear_accel_mps2 -
                                     filtered_accel_mps2);
-            fused_speed_mps += filtered_accel_mps2 * elapsed_s;
         }
     }
     else
@@ -439,8 +449,7 @@ void drive_control_update(float rear_position_turns,
         filtered_accel_mps2 = 0.0f;
     }
 
-    if (rear_feedback_ready && rear_feedback_ms != 0u &&
-        rear_feedback_ms != previous_rear_feedback_ms)
+    if (fresh_encoder_sample && position_initialized)
     {
         wheel_slip_active = false;
         if (previous_rear_feedback_ms != 0u)
@@ -454,52 +463,18 @@ void drive_control_update(float rear_position_turns,
                 const float wheel_accel_mps2 =
                     (wheel_speed_mps - previous_wheel_speed_mps) /
                     sample_elapsed_s;
-                const float speed_error_mps =
-                    fabsf(wheel_speed_mps - fused_speed_mps);
                 const float accel_error_mps2 =
                     fabsf(wheel_accel_mps2 - filtered_accel_mps2);
                 wheel_slip_active = finite_acceleration &&
                     fabsf(output_speed_mps) >= DRIVE_MIN_SPEED_MPS &&
-                    (speed_error_mps >= DRIVE_SLIP_SPEED_ERROR_MPS ||
-                     (fabsf(wheel_accel_mps2) >=
-                          DRIVE_SLIP_ACCEL_ERROR_MPS2 &&
-                      accel_error_mps2 >=
-                          DRIVE_SLIP_ACCEL_ERROR_MPS2));
+                    fabsf(wheel_accel_mps2) >=
+                        DRIVE_SLIP_ACCEL_ERROR_MPS2 &&
+                    accel_error_mps2 >=
+                        DRIVE_SLIP_ACCEL_ERROR_MPS2;
             }
         }
-        const float encoder_gain = !finite_acceleration
-                                       ? 1.0f
-                                       : (wheel_slip_active
-                                              ? DRIVE_FUSION_SLIP_GAIN
-                                              : DRIVE_FUSION_ENCODER_GAIN);
-        fused_speed_mps += encoder_gain *
-                           (wheel_speed_mps - fused_speed_mps);
         previous_wheel_speed_mps = wheel_speed_mps;
         previous_rear_feedback_ms = rear_feedback_ms;
-    }
-    else if (!finite_acceleration && rear_feedback_ready)
-    {
-        fused_speed_mps = wheel_speed_mps;
-    }
-
-    fused_speed_mps = clamp_float(fused_speed_mps,
-                                  -DRIVE_MAX_SPEED_MPS * 1.2f,
-                                  DRIVE_MAX_SPEED_MPS * 1.2f);
-    if (requested_mode == DRIVE_MODE_STOPPED &&
-        fabsf(output_speed_mps) < 0.02f &&
-        fabsf(wheel_speed_mps) < 0.03f)
-    {
-        fused_speed_mps = move_towards(fused_speed_mps,
-                                       0.0f,
-                                       0.5f * elapsed_s);
-        if (fabsf(fused_speed_mps) < 0.005f)
-        {
-            fused_speed_mps = 0.0f;
-        }
-    }
-    if (position_initialized && elapsed_s > 0.0f)
-    {
-        fused_odometry_m += fused_speed_mps * elapsed_s;
     }
 
     const bool command_fresh =
@@ -514,8 +489,8 @@ void drive_control_update(float rear_position_turns,
         command_timeout_latched = true;
         steering_disable_command();
     }
-    const bool unsafe_drive = command_timed_out || !drive_safe() || direction_mismatch_latched ||
-                              (requested_mode == DRIVE_MODE_DEMO && !finite_acceleration);
+    const bool unsafe_drive = command_timed_out || !drive_safe() ||
+                              direction_mismatch_latched;
     if (unsafe_drive)
     {
         if (requested_mode == DRIVE_MODE_DEMO)
@@ -526,7 +501,10 @@ void drive_control_update(float rear_position_turns,
         demo_phase = DRIVE_DEMO_IDLE;
     }
 
-    const float actual_speed_mps = fused_speed_mps;
+    const float actual_speed_mps = rear_feedback_ready &&
+                                   isfinite(wheel_speed_mps)
+                                       ? wheel_speed_mps
+                                       : 0.0f;
     float target_speed_mps = 0.0f;
     if (requested_mode == DRIVE_MODE_MANUAL)
     {
@@ -594,7 +572,8 @@ void drive_control_update(float rear_position_turns,
     }
     if (position_initialized)
     {
-        flags |= DRIVE_FLAG_POSITION_VALID;
+        flags |= DRIVE_FLAG_POSITION_VALID |
+                 DRIVE_FLAG_ENCODER_ODOMETRY;
     }
     if (direction_mismatch_latched)
     {
@@ -602,8 +581,7 @@ void drive_control_update(float rear_position_turns,
     }
     if (finite_acceleration)
     {
-        flags |= DRIVE_FLAG_IMU_ACCEL_READY |
-                 DRIVE_FLAG_IMU_FUSION_ACTIVE;
+        flags |= DRIVE_FLAG_IMU_ACCEL_READY;
     }
     if (wheel_slip_active)
     {
@@ -616,7 +594,7 @@ void drive_control_update(float rear_position_turns,
     drive_telemetry.requested_speed_mps = requested_speed_mps;
     drive_telemetry.output_speed_mps = output_speed_mps;
     drive_telemetry.actual_speed_mps = actual_speed_mps;
-    drive_telemetry.odometry_m = fused_odometry_m;
+    drive_telemetry.odometry_m = encoder_odometry_m;
     drive_telemetry.segment_distance_m = position_initialized
                                             ? segment_progress_m()
                                             : 0.0f;
@@ -658,10 +636,9 @@ DriveCommandResult drive_demo_command(float speed_mps)
         return DRIVE_COMMAND_BAD_VALUE;
     }
     if (!drive_safe() || !position_initialized ||
-        !imu_accel_ready_cached || !accel_bias_initialized ||
         requested_mode != DRIVE_MODE_STOPPED ||
         fabsf(output_speed_mps) > DRIVE_STOP_SPEED_MPS ||
-        fabsf(fused_speed_mps) > DRIVE_STOP_SPEED_MPS)
+        fabsf(previous_wheel_speed_mps) > DRIVE_STOP_SPEED_MPS)
     {
         return DRIVE_COMMAND_UNSAFE_STATE;
     }
