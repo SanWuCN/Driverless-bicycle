@@ -409,6 +409,37 @@ static void uart7_process_command(char *line)
         return;
     }
 
+    if (strcmp(action, "ODRIVE") == 0)
+    {
+        char *subcommand = strtok(NULL, ",");
+        if (subcommand == NULL || strtok(NULL, ",") != NULL)
+        {
+            uart7_reply(sequence, "ERR", "FORMAT");
+            return;
+        }
+        if (strcmp(subcommand, "RECOVER") == 0)
+        {
+            const BalanceRecoveryResult result =
+                balance_odrive_recovery_command();
+            if (result == BALANCE_RECOVERY_ALREADY_ARMED)
+            {
+                uart7_reply(sequence, "ERR", "BALANCE_ALREADY_ARMED");
+                return;
+            }
+            if (result == BALANCE_RECOVERY_REAR_WHEEL_RUNNING)
+            {
+                uart7_reply(sequence, "ERR", "REAR_WHEEL_RUNNING");
+                return;
+            }
+            uart7_reply(sequence,
+                        "OK",
+                        "ODRIVE,RECOVERY_PENDING,UPRIGHT_REQUIRED");
+            return;
+        }
+        uart7_reply(sequence, "ERR", "UNKNOWN_ODRIVE_COMMAND");
+        return;
+    }
+
     if (strcmp(action, "DRIVE") == 0)
     {
         char *subcommand = strtok(NULL, ",");
@@ -457,9 +488,34 @@ static void uart7_process_command(char *line)
                 uart7_reply(sequence, "ERR", "DRIVE_SPEED_RANGE");
                 return;
             }
-            if (result == DRIVE_COMMAND_UNSAFE_STATE)
+            if (result == DRIVE_COMMAND_BALANCE_NOT_ARMED)
             {
-                uart7_reply(sequence, "ERR", "DRIVE_UNSAFE_STATE");
+                uart7_reply(sequence, "ERR", "DRIVE_BALANCE_NOT_ARMED");
+                return;
+            }
+            if (result == DRIVE_COMMAND_REAR_FEEDBACK_NOT_READY)
+            {
+                uart7_reply(sequence, "ERR", "DRIVE_AXIS1_NOT_READY");
+                return;
+            }
+            if (result == DRIVE_COMMAND_FALL_DISARMED)
+            {
+                uart7_reply(sequence, "ERR", "DRIVE_FALL_RECOVERY_PENDING");
+                return;
+            }
+            if (result == DRIVE_COMMAND_ODOMETRY_NOT_READY)
+            {
+                uart7_reply(sequence, "ERR", "DRIVE_ENCODER_FIRST_FRAME_PENDING");
+                return;
+            }
+            if (result == DRIVE_COMMAND_ALREADY_ACTIVE)
+            {
+                uart7_reply(sequence, "ERR", "DRIVE_ALREADY_ACTIVE");
+                return;
+            }
+            if (result == DRIVE_COMMAND_REAR_WHEEL_MOVING)
+            {
+                uart7_reply(sequence, "ERR", "DRIVE_REAR_WHEEL_MOVING");
                 return;
             }
             char detail[96];

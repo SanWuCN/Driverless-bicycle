@@ -99,6 +99,8 @@ void balance_monitor_update(float roll_deg,
                             bool odrive_timeout,
                             bool odrive_fault,
                             bool fall_disarm_latched,
+                            bool odrive_recovery_pending,
+                            bool odrive_recovery_failed,
                             float rate_target_dps,
                             float rate_error_dps,
                             float rate_p_term_tps,
@@ -220,6 +222,14 @@ void balance_monitor_update(float roll_deg,
     if (fall_disarm_latched)
     {
         flags |= BALANCE_MONITOR_FALL_DISARM_LATCHED;
+    }
+    if (odrive_recovery_pending)
+    {
+        flags |= BALANCE_MONITOR_ODRIVE_RECOVERY_PENDING;
+    }
+    if (odrive_recovery_failed)
+    {
+        flags |= BALANCE_MONITOR_ODRIVE_RECOVERY_FAILED;
     }
     if (!steering_zero_learning_allowed)
     {

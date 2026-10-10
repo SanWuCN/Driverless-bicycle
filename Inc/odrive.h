@@ -73,6 +73,7 @@ bool odrive_set_controller_modes(unsigned char num,
                                  uint32_t control_mode,
                                  uint32_t input_mode);
 bool odrive_request_axis_state(unsigned char num, uint32_t requested_state);
+bool odrive_clear_errors(unsigned char num);
 bool odrive_axis_feedback_fresh(unsigned char num,
                                 uint32_t now_ms,
                                 uint32_t timeout_ms);

@@ -11,7 +11,7 @@ const state = {
 };
 
 const colors = { green: "#56d5ee", cyan: "#67d4ff", amber: "#f5c870", violet: "#b8a5ff", red: "#ff7e8c", gray: "#aab9c9" };
-const dangerousFlags = new Set(["BIAS_SAT", "VELOCITY_SAT", "ACCEL_SAT", "ZERO_LIMIT", "ZERO_PERSIST_ERROR", "ODRIVE_TIMEOUT", "ODRIVE_FAULT", "UART7_RX_OVERFLOW", "RATE_TARGET_SAT", "FALL_DISARM"]);
+const dangerousFlags = new Set(["BIAS_SAT", "VELOCITY_SAT", "ACCEL_SAT", "ZERO_LIMIT", "ZERO_PERSIST_ERROR", "ODRIVE_TIMEOUT", "ODRIVE_FAULT", "ODRIVE_RECOVERY_FAILED", "UART7_RX_OVERFLOW", "RATE_TARGET_SAT", "FALL_DISARM"]);
 
 const $ = (selector) => document.querySelector(selector);
 const fmt = (value, digits = 2) => value === undefined || value === null || value === "" ? "--" : Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "--";
@@ -255,6 +255,29 @@ async function setTelemetryMode(mode) {
   finally { button.disabled = false; }
 }
 
+async function recoverOdrive() {
+  if (!confirm("确认车体已扶正、后轮已停止，并且有人扶稳车辆？恢复成功后将重新进入 2 秒启动计时。")) return;
+  const button = $("#odrive-recover");
+  const feedback = $("#odrive-recovery-feedback");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  feedback.textContent = "正在请求安全恢复…";
+  feedback.className = "command-feedback";
+  try {
+    const result = await post("/api/odrive", { action: "recover" });
+    feedback.textContent = result.reply;
+    feedback.className = "command-feedback ok";
+    showToast("恢复流程已请求，请继续扶稳 2 秒");
+  } catch (error) {
+    feedback.textContent = error.message;
+    feedback.className = "command-feedback error";
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
 function ingestSamples(samples) {
   for (const sample of samples) { if (sample.id <= state.lastSampleId) continue; state.samples.push(sample); state.lastSampleId = sample.id; state.sampleTimes.push(sample.host_time_s); }
   const cutoff = (state.samples.at(-1)?.host_time_s || 0) - 125;
@@ -302,6 +325,8 @@ function renderStatus(status) {
   }
   const drive = status.drive || {};
   const driveMode = Number(drive.mode ?? 0);
+  const recoverButton = $("#odrive-recover");
+  if (!recoverButton.hasAttribute("aria-busy")) recoverButton.disabled = !uartFresh || armed || driveMode !== 0;
   const driveModeNames = ["静止", "手动", "循环演示"];
   $("#drive-mode").textContent = driveModeNames[driveMode] || "未知";
   $("#drive-target").textContent = signed(drive.requested_speed_mps, 2);
@@ -309,8 +334,26 @@ function renderStatus(status) {
   $("#drive-actual").textContent = signed(drive.actual_speed_mps, 2);
   $("#drive-odometry").textContent = signed(drive.odometry_m, 2);
   const driveFlags = Number(drive.flags || 0);
-  $("#drive-fusion").textContent = (driveFlags & (1 << 9)) ? "后轮编码器里程" : "编码器里程未就绪";
-  $("#drive-safety").textContent = !uartFresh ? "等待车辆连接" : (driveFlags & (1 << 10)) ? "检测到打滑" : (driveFlags & (1 << 2)) ? "运动锁定" : "运动就绪";
+  const balanceArmed = Boolean(driveFlags & (1 << 3));
+  const rearFeedbackReady = Boolean(driveFlags & (1 << 4));
+  const positionValid = Boolean(driveFlags & (1 << 7));
+  const encoderOdometry = Boolean(driveFlags & (1 << 9));
+  let odometryState = "等待车辆连接";
+  if (uartFresh) {
+    if (!rearFeedbackReady) odometryState = "Axis 1 无反馈";
+    else if (!positionValid || !encoderOdometry) odometryState = "等待编码器首帧";
+    else odometryState = "后轮编码器里程";
+  }
+  $("#drive-fusion").textContent = odometryState;
+  let driveSafetyState = "运动就绪";
+  if (!uartFresh) driveSafetyState = "等待车辆连接";
+  else if (!balanceArmed) driveSafetyState = "等待平衡启动";
+  else if (!rearFeedbackReady) driveSafetyState = "Axis 1 未进入闭环";
+  else if (!positionValid || !encoderOdometry) driveSafetyState = "等待编码器首帧";
+  else if (driveFlags & (1 << 8)) driveSafetyState = "后轮方向异常";
+  else if (driveFlags & (1 << 10)) driveSafetyState = "检测到打滑";
+  else if (driveFlags & (1 << 2)) driveSafetyState = "安全状态锁定";
+  $("#drive-safety").textContent = driveSafetyState;
   const phaseNames = ["演示未运行", "直行 2 m", "停稳", "右转 15°", "右转等待 5 s", "右转回中", "左转 15°", "左转等待 5 s", "前进 1 m", "后退 1 m", "回中", "倒车 2 m"];
   $("#demo-phase").textContent = phaseNames[Number(drive.demo_phase ?? 0)] || "未知阶段";
   $("#demo-cycles").textContent = `${Number(drive.demo_cycle_count || 0)} 组`;
@@ -329,7 +372,16 @@ function setPill(selector, text, className) { const el = $(selector); el.childNo
 function signed(value, digits) { if (value === undefined || value === null || value === "") return "--"; const n = Number(value); return Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(digits)}` : "--"; }
 function renderFlags(flags) { const root = $("#flag-list"); root.innerHTML = ""; const visible = flags.length ? flags : ["NO FLAGS"]; for (const name of visible) { const span = document.createElement("span"); span.className = `flag ${dangerousFlags.has(name) ? "alert" : ["CONTROL_ARMED","IMU_READY","ODRIVE_READY"].includes(name) ? "good" : ""}`; span.textContent = name; root.appendChild(span); } }
 function renderHardware(o) {
-  const values = [["状态", o.axis_state === 8 ? "8 · CLOSED LOOP" : String(o.axis_state ?? "--")], ["电流限制", `${fmt(o.current_lim_a,1)} A`], ["加速度斜坡", `${fmt(o.vel_ramp_tps2,1)} tps²`], ["速度限制", `${fmt(o.vel_limit_tps,1)} tps`], ["Axis 错误", o.axis_error || "--"], ["Controller 错误", o.controller_error || "--"]];
+  const values = [
+    ["Axis 0 状态", o.axis_state === 8 ? "8 · CLOSED LOOP" : String(o.axis_state ?? "--")],
+    ["Axis 0 错误", o.axis_error || "--"],
+    ["Axis 1 状态", o.axis1_state === 8 ? "8 · CLOSED LOOP" : String(o.axis1_state ?? "--")],
+    ["Axis 1 错误", o.axis1_error || "--"],
+    ["Axis 1 编码器", o.axis1_encoder_error || "--"],
+    ["电流限制", `${fmt(o.current_lim_a,1)} A`],
+    ["加速度斜坡", `${fmt(o.vel_ramp_tps2,1)} tps²`],
+    ["速度限制", `${fmt(o.vel_limit_tps,1)} tps`],
+  ];
   const root = $("#hardware-list"); root.innerHTML = values.map(([k,v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
 }
 
@@ -459,6 +511,7 @@ $("#drive-reverse").addEventListener("click", () => commandDrive("reverse"));
 $("#drive-stop").addEventListener("click", () => commandDrive("stop"));
 $("#drive-demo").addEventListener("click", () => commandDrive((Number(state.status?.drive?.mode ?? 0) === 2 || state.status?.drive_mode === "demo") ? "stop" : "demo"));
 $("#telemetry-button").addEventListener("click", () => { setTelemetryMode(state.status?.telemetry_mode === "live" ? "basic" : "live").catch(() => {}); });
+$("#odrive-recover").addEventListener("click", recoverOdrive);
 $("#serial-port").addEventListener("change", async event => {
   state.portPickerBusy = true;
   try { await post("/api/port", { port: event.target.value }); showToast(event.target.value ? "串口已选择，正在连接" : "串口已断开"); }

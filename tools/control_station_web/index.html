@@ -117,12 +117,16 @@
       </section>
 
       <section class="panel compact">
-        <div class="panel-heading"><div><span class="kicker">05 / HARDWARE</span><h2>ODrive Axis 0</h2></div></div>
+        <div class="panel-heading"><div><span class="kicker">05 / HARDWARE</span><h2>ODrive 双轴</h2></div></div>
         <dl class="hardware-list" id="hardware-list">
           <div><dt>状态</dt><dd>--</dd></div><div><dt>电流限制</dt><dd>--</dd></div>
           <div><dt>加速度斜坡</dt><dd>--</dd></div><div><dt>速度限制</dt><dd>--</dd></div>
           <div><dt>Axis 错误</dt><dd>--</dd></div><div><dt>Controller 错误</dt><dd>--</dd></div>
         </dl>
+        <div class="hardware-actions">
+          <button class="button danger-ghost" id="odrive-recover" type="button">清错并重新准备</button>
+        </div>
+        <p class="command-feedback" id="odrive-recovery-feedback" aria-live="polite">等待恢复操作</p>
       </section>
     </aside>
 

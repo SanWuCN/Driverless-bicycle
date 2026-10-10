@@ -144,6 +144,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .hardware-list div { display: flex; justify-content: space-between; gap: 8px; padding: 8px; background: #111820; }
 .hardware-list dt { color: var(--muted); font-size: 10px; }
 .hardware-list dd { margin: 0; font: 11px "SFMono-Regular", Consolas, monospace; }
+.hardware-actions { display: flex; margin-top: 14px; }
+.hardware-actions .button { min-height: 44px; width: 100%; }
 
 .chart-toolbar { flex-direction: row; display: flex; align-items: center; justify-content: space-between; }
 .chart-toolbar-actions { display: flex; align-items: center; gap: 10px; }

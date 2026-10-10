@@ -43,6 +43,10 @@
 #define BALANCE_RATE_LIMIT_MAX_ELAPSED_MS 10u
 #define BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS 300u
 #define BALANCE_ODRIVE_STATE_REQUEST_PERIOD_MS 100u
+#define BALANCE_ODRIVE_RECOVERY_PERIOD_MS 250u
+#define BALANCE_ODRIVE_RECOVERY_SETTLE_MS 1000u
+#define BALANCE_ODRIVE_RECOVERY_MAX_ATTEMPTS 3u
+#define BALANCE_ODRIVE_RECOVERY_MAX_WHEEL_TPS 2.0f
 #define BALANCE_CONTROL_DT_S 0.002f
 #define BALANCE_WHEEL_CONTROL_DT_S 0.040f
 #define BALANCE_RATE_INTEGRAL_LIMIT_DPS_S 5.0f
@@ -92,6 +96,15 @@ static bool balance_odrive_fault;
 static bool balance_fall_disarm_latched;
 static bool angle_velocity_initialized;
 static uint32_t balance_last_odrive_state_request_ms;
+static volatile uint32_t balance_last_odrive_recovery_ms;
+static volatile uint8_t balance_odrive_recovery_attempts;
+static volatile bool balance_odrive_recovery_requested;
+static volatile bool balance_odrive_recovery_failed;
+static volatile uint32_t rear_odrive_recovery_last_ms;
+static volatile uint32_t rear_odrive_state_request_last_ms;
+static volatile uint8_t rear_odrive_recovery_attempts;
+static volatile bool rear_odrive_recovery_requested;
+static volatile bool rear_odrive_recovery_failed;
 static float rate_target_dps;
 static float rate_error_dps;
 static float rate_p_term_tps;
@@ -265,6 +278,111 @@ static void balance_reset_controller_state(void)
     rate_limiter_initialized = false;
 }
 
+BalanceRecoveryResult balance_odrive_recovery_command(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    if (param.scope_flag == 1)
+    {
+        if (primask == 0u)
+        {
+            __enable_irq();
+        }
+        return BALANCE_RECOVERY_ALREADY_ARMED;
+    }
+    if (param.run_flag != 0)
+    {
+        if (primask == 0u)
+        {
+            __enable_irq();
+        }
+        return BALANCE_RECOVERY_REAR_WHEEL_RUNNING;
+    }
+    balance_odrive_recovery_requested = true;
+    balance_odrive_recovery_failed = false;
+    balance_odrive_recovery_attempts = 0u;
+    balance_last_odrive_recovery_ms = 0u;
+    rear_odrive_recovery_requested = true;
+    rear_odrive_recovery_failed = false;
+    rear_odrive_recovery_attempts = 0u;
+    rear_odrive_recovery_last_ms = 0u;
+    rear_odrive_state_request_last_ms = 0u;
+    balance_arm_window = false;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+    return BALANCE_RECOVERY_OK;
+}
+
+static void rear_odrive_recovery_update(void)
+{
+    if (!rear_odrive_recovery_requested || param.run_flag != 0)
+    {
+        return;
+    }
+
+    const uint32_t now_ms = HAL_GetTick();
+    const bool stable_upright = balance_imu_ready &&
+        isfinite(imu.rol) && isfinite(imu.vx) &&
+        fabsf(imu.rol - param.angular_zero) <= BALANCE_ARM_ROLL_WINDOW_DEG &&
+        fabsf(imu.vx) <= BALANCE_ARM_RATE_WINDOW_DPS;
+    const bool heartbeat_fresh = odrive.heartbeat_seen[1] &&
+        (uint32_t)(now_ms - odrive.last_heartbeat_ms[1]) <=
+            BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS;
+    if (!stable_upright || !heartbeat_fresh)
+    {
+        return;
+    }
+
+    odrive.set_speed1 = 0.0f;
+    if (odrive.axis_error[1] != 0u)
+    {
+        const uint32_t elapsed_ms = now_ms - rear_odrive_recovery_last_ms;
+        if (rear_odrive_recovery_attempts <
+                BALANCE_ODRIVE_RECOVERY_MAX_ATTEMPTS &&
+            (rear_odrive_recovery_last_ms == 0u ||
+             elapsed_ms >= BALANCE_ODRIVE_RECOVERY_PERIOD_MS))
+        {
+            (void)odrive_request_axis_state(1u, 1u);
+            if (odrive_clear_errors(1u))
+            {
+                rear_odrive_recovery_attempts++;
+            }
+            rear_odrive_recovery_last_ms = now_ms;
+        }
+        else if (rear_odrive_recovery_attempts >=
+                     BALANCE_ODRIVE_RECOVERY_MAX_ATTEMPTS &&
+                 elapsed_ms >= BALANCE_ODRIVE_RECOVERY_SETTLE_MS)
+        {
+            rear_odrive_recovery_requested = false;
+            rear_odrive_recovery_failed = true;
+        }
+        return;
+    }
+
+    rear_odrive_recovery_attempts = 0u;
+    rear_odrive_recovery_last_ms = 0u;
+    rear_odrive_recovery_failed = false;
+    if (odrive.axis_state[1] == 1u)
+    {
+        if ((uint32_t)(now_ms - rear_odrive_state_request_last_ms) >=
+            BALANCE_ODRIVE_STATE_REQUEST_PERIOD_MS)
+        {
+            rear_odrive_state_request_last_ms = now_ms;
+            (void)odrive_request_axis_state(1u, 8u);
+        }
+        return;
+    }
+    if (odrive_axis_feedback_fresh(1u,
+                                   now_ms,
+                                   BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS) &&
+        odrive_axis_closed_loop_error_free(1u))
+    {
+        rear_odrive_recovery_requested = false;
+    }
+}
+
 static void balance_auto_arm_update(void)
 {
     const uint32_t now_ms = HAL_GetTick();
@@ -291,13 +409,17 @@ static void balance_auto_arm_update(void)
                             ((param.scope_flag == 1) &&
                              (odrive.axis_state[0] != 8u)));
 
-    const bool inside_arm_window = balance_imu_ready &&
-                                   imu_finite &&
-                                   odrive_feedback_fresh &&
-                                   odrive_error_free &&
-                                   (fabsf(imu.rol - param.angular_zero) <=
-                                    BALANCE_ARM_ROLL_WINDOW_DEG) &&
-                                   (fabsf(imu.vx) <= BALANCE_ARM_RATE_WINDOW_DPS);
+    const bool inside_recovery_window = balance_imu_ready &&
+                                        imu_finite &&
+                                        odrive_feedback_fresh &&
+                                        (fabsf(imu.rol - param.angular_zero) <=
+                                         BALANCE_ARM_ROLL_WINDOW_DEG) &&
+                                        (fabsf(imu.vx) <=
+                                         BALANCE_ARM_RATE_WINDOW_DPS) &&
+                                        (fabsf(odrive.now_speed0) <=
+                                         BALANCE_ODRIVE_RECOVERY_MAX_WHEEL_TPS);
+    const bool inside_arm_window = inside_recovery_window &&
+                                   odrive_error_free;
     const bool fall_angle_exceeded = imu_finite &&
         (fabsf(imu.rol - balance_monitor_zero_for_control()) >=
          BALANCE_FALL_DISARM_ANGLE_DEG);
@@ -308,6 +430,10 @@ static void balance_auto_arm_update(void)
         if (fall_angle_exceeded)
         {
             balance_fall_disarm_latched = true;
+            balance_odrive_recovery_requested = true;
+            balance_odrive_recovery_failed = false;
+            balance_odrive_recovery_attempts = 0u;
+            balance_last_odrive_recovery_ms = 0u;
             param.scope_flag = 0;
             balance_reset_controller_state();
             (void)odrive_request_axis_state(0u, 1u);
@@ -315,6 +441,13 @@ static void balance_auto_arm_update(void)
         }
         if (!balance_imu_ready || !imu_finite || balance_odrive_fault)
         {
+            if (balance_odrive_fault)
+            {
+                balance_odrive_recovery_requested = true;
+                balance_odrive_recovery_failed = false;
+                balance_odrive_recovery_attempts = 0u;
+                balance_last_odrive_recovery_ms = 0u;
+            }
             param.scope_flag = 0;
             balance_reset_controller_state();
         }
@@ -322,6 +455,46 @@ static void balance_auto_arm_update(void)
     }
 
     balance_reset_controller_state();
+    if (balance_odrive_recovery_requested)
+    {
+        balance_arm_window = false;
+        if (!inside_recovery_window)
+        {
+            return;
+        }
+        if (!odrive_error_free)
+        {
+            const uint32_t recovery_elapsed_ms =
+                now_ms - balance_last_odrive_recovery_ms;
+            if (balance_odrive_recovery_attempts <
+                    BALANCE_ODRIVE_RECOVERY_MAX_ATTEMPTS &&
+                (balance_last_odrive_recovery_ms == 0u ||
+                 recovery_elapsed_ms >= BALANCE_ODRIVE_RECOVERY_PERIOD_MS))
+            {
+                odrive.set_speed0 = 0.0f;
+                odrive.set_torque0 = 0.0f;
+                (void)odrive_request_axis_state(0u, 1u);
+                if (odrive_clear_errors(0u))
+                {
+                    balance_odrive_recovery_attempts++;
+                }
+                balance_last_odrive_recovery_ms = now_ms;
+            }
+            else if (balance_odrive_recovery_attempts >=
+                         BALANCE_ODRIVE_RECOVERY_MAX_ATTEMPTS &&
+                     recovery_elapsed_ms >=
+                         BALANCE_ODRIVE_RECOVERY_SETTLE_MS)
+            {
+                balance_odrive_recovery_requested = false;
+                balance_odrive_recovery_failed = true;
+            }
+            return;
+        }
+        balance_odrive_recovery_requested = false;
+        balance_odrive_recovery_failed = false;
+        balance_odrive_recovery_attempts = 0u;
+        balance_last_odrive_recovery_ms = 0u;
+    }
     if (!inside_arm_window)
     {
         balance_arm_window = false;
@@ -364,6 +537,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     {
         imu_get();//陀螺仪读取
         balance_auto_arm_update();
+        rear_odrive_recovery_update();
 
         const bool rear_feedback_ready = odrive_axis_feedback_fresh(
             1u, HAL_GetTick(), BALANCE_ODRIVE_FEEDBACK_TIMEOUT_MS) &&
@@ -430,6 +604,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
                                balance_odrive_timeout,
                                balance_odrive_fault,
                                balance_fall_disarm_latched,
+                               balance_odrive_recovery_requested ||
+                                   rear_odrive_recovery_requested,
+                               balance_odrive_recovery_failed ||
+                                   rear_odrive_recovery_failed,
                                rate_target_dps,
                                rate_error_dps,
                                rate_p_term_tps,
@@ -493,6 +671,15 @@ void param_init(){
     balance_odrive_fault = false;
     balance_fall_disarm_latched = false;
     balance_last_odrive_state_request_ms = 0u;
+    balance_last_odrive_recovery_ms = 0u;
+    balance_odrive_recovery_attempts = 0u;
+    balance_odrive_recovery_requested = true;
+    balance_odrive_recovery_failed = false;
+    rear_odrive_recovery_last_ms = 0u;
+    rear_odrive_state_request_last_ms = 0u;
+    rear_odrive_recovery_attempts = 0u;
+    rear_odrive_recovery_requested = true;
+    rear_odrive_recovery_failed = false;
 
     // 上电默认保持后轮停止；收到明确运行指令后再将 run_flag 置 1。
     param.run_flag = 0;

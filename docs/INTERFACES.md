@@ -163,6 +163,27 @@ Axis 1保持速度控制模式，STM32把网页的m/s换算为ODrive turns/s。�
 防止反馈重置造成里程突跳。IMU X轴纵向加速度只用于打滑诊断，不再参与演示距离积分，
 也不再作为启动演示的必要条件。
 
+## 5.2 ODrive 故障恢复
+
+ODrive 的 Axis/Motor/Encoder/Controller 错误由 ODrive 自身锁存；只复位 STM32 不一定会
+清除。固件上电后或触发 `±8°` 失衡保护后，会在车体进入 `±3°`、横滚角速度不超过
+`1°/s`、动量轮速度不超过 `2 tps`、后轮停止且反馈新鲜时执行受控恢复：保持零输出、
+请求 Axis 0 进入 IDLE、最多发送三次 `Clear_Errors`，错误消失后请求 CLOSED_LOOP，
+随后重新连续计时 2 秒才恢复平衡。错误持续存在时停止自动重试并保持禁止输出。
+
+```text
+@P,<seq>,ODRIVE,RECOVER,<crc16> # 人工重新发起上述受控恢复，不绕过安全条件
+```
+
+该命令仅在平衡未启动且后轮停止时接受，并会对 Axis 0 和 Axis 1 执行恢复。它不能修复
+真实的过流、编码器、母线电压或接线故障；同一错误在三次清除后仍存在时，应读取具体
+错误码并处理根因。
+
+后轮命令不再统一返回含义模糊的 `DRIVE_UNSAFE_STATE`，而会返回具体原因：
+`DRIVE_BALANCE_NOT_ARMED`、`DRIVE_AXIS1_NOT_READY`、
+`DRIVE_FALL_RECOVERY_PENDING`、`DRIVE_ENCODER_FIRST_FRAME_PENDING`、
+`DRIVE_ALREADY_ACTIVE` 或 `DRIVE_REAR_WHEEL_MOVING`。
+
 ## 6. I2C OLED
 
 - I2C2：PF0 SDA、PF1 SCL。

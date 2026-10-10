@@ -133,6 +133,23 @@ static bool drive_safe(void)
            !fall_disarmed_cached;
 }
 
+static DriveCommandResult drive_readiness_result(void)
+{
+    if (!balance_ready_cached)
+    {
+        return DRIVE_COMMAND_BALANCE_NOT_ARMED;
+    }
+    if (!rear_feedback_cached)
+    {
+        return DRIVE_COMMAND_REAR_FEEDBACK_NOT_READY;
+    }
+    if (fall_disarmed_cached)
+    {
+        return DRIVE_COMMAND_FALL_DISARMED;
+    }
+    return DRIVE_COMMAND_OK;
+}
+
 static void begin_distance_phase(DriveDemoPhase phase,
                                  float direction,
                                  float distance_m,
@@ -609,9 +626,10 @@ DriveCommandResult drive_manual_command(float speed_mps)
     {
         return DRIVE_COMMAND_BAD_VALUE;
     }
-    if (!drive_safe())
+    const DriveCommandResult readiness = drive_readiness_result();
+    if (readiness != DRIVE_COMMAND_OK)
     {
-        return DRIVE_COMMAND_UNSAFE_STATE;
+        return readiness;
     }
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -635,12 +653,23 @@ DriveCommandResult drive_demo_command(float speed_mps)
     {
         return DRIVE_COMMAND_BAD_VALUE;
     }
-    if (!drive_safe() || !position_initialized ||
-        requested_mode != DRIVE_MODE_STOPPED ||
-        fabsf(output_speed_mps) > DRIVE_STOP_SPEED_MPS ||
+    const DriveCommandResult readiness = drive_readiness_result();
+    if (readiness != DRIVE_COMMAND_OK)
+    {
+        return readiness;
+    }
+    if (!position_initialized)
+    {
+        return DRIVE_COMMAND_ODOMETRY_NOT_READY;
+    }
+    if (requested_mode != DRIVE_MODE_STOPPED)
+    {
+        return DRIVE_COMMAND_ALREADY_ACTIVE;
+    }
+    if (fabsf(output_speed_mps) > DRIVE_STOP_SPEED_MPS ||
         fabsf(previous_wheel_speed_mps) > DRIVE_STOP_SPEED_MPS)
     {
-        return DRIVE_COMMAND_UNSAFE_STATE;
+        return DRIVE_COMMAND_REAR_WHEEL_MOVING;
     }
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();

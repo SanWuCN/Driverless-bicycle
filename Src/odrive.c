@@ -137,6 +137,27 @@ bool odrive_request_axis_state(unsigned char num, uint32_t requested_state)
     return true;
 }
 
+bool odrive_clear_errors(unsigned char num)
+{
+    CAN_TxHeaderTypeDef header;
+    uint8_t data[1] = {0u};
+    uint32_t mailbox;
+
+    header.RTR = CAN_RTR_DATA;
+    header.IDE = CAN_ID_STD;
+    header.DLC = 0u;
+    header.StdId = ((NODE_ID(num) << 5) | MSG_CLEAR_ERRORS);
+    header.ExtId = 0u;
+    header.TransmitGlobalTime = DISABLE;
+
+    if (HAL_CAN_AddTxMessage(&hcan2, &header, data, &mailbox) != HAL_OK)
+    {
+        odrive.tx_failure_count++;
+        return false;
+    }
+    return true;
+}
+
 void odrive_vel_callback(unsigned char num)
 {
     CAN_TxHeaderTypeDef header;

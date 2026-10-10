@@ -30,7 +30,9 @@ enum
     BALANCE_MONITOR_ZERO_STEERING_BLOCKED = (1u << 21),
     BALANCE_MONITOR_ACCEL_BOOST_120_ACTIVE = (1u << 22),
     BALANCE_MONITOR_SPEED_ENVELOPE_ACTIVE = (1u << 23),
-    BALANCE_MONITOR_TORQUE_CONTROL_ACTIVE = (1u << 24)
+    BALANCE_MONITOR_TORQUE_CONTROL_ACTIVE = (1u << 24),
+    BALANCE_MONITOR_ODRIVE_RECOVERY_PENDING = (1u << 25),
+    BALANCE_MONITOR_ODRIVE_RECOVERY_FAILED = (1u << 26)
 };
 
 typedef struct
@@ -91,6 +93,8 @@ void balance_monitor_update(float roll_deg,
                             bool odrive_timeout,
                             bool odrive_fault,
                             bool fall_disarm_latched,
+                            bool odrive_recovery_pending,
+                            bool odrive_recovery_failed,
                             float rate_target_dps,
                             float rate_error_dps,
                             float rate_p_term_tps,

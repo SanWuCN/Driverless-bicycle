@@ -229,6 +229,8 @@ kB/s，会出现截断和连包，不能用于安全在线调参。
 | 22 | `0x400000` | `ACCEL_BOOST_120` | 当前满足向外倾倒救车条件，加速度上限临时提升至 ±120 tps² |
 | 23 | `0x800000` | `SPEED_ENVELOPE` | 实际轮速进入25–35 tps包络，继续向外加速被渐进削弱 |
 | 24 | `0x1000000` | `TORQUE_CONTROL` | 仅用于识别直接力矩实验固件；当前速度版本不置位 |
+| 25 | `0x2000000` | `ODRIVE_RECOVERY_PENDING` | 已请求 ODrive 受控清错，等待扶正/停稳或错误消失 |
+| 26 | `0x4000000` | `ODRIVE_RECOVERY_FAILED` | 三次清错后错误仍存在，保持禁止输出并等待人工处理 |
 
 正常闭环阶段不应持续出现 `ACCEL_SAT` 或 `VELOCITY_SAT`。调参时应结合 P/I/D 加速度分项、`accel_raw_tps2` 与 `accel_limit_error_tps2` 判断控制器是否长期要求超出机构能力。
 

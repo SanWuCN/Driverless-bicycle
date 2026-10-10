@@ -46,6 +46,13 @@ typedef enum
     BALANCE_TUNING_UNSAFE_STATE
 } BalanceTuningResult;
 
+typedef enum
+{
+    BALANCE_RECOVERY_OK = 0,
+    BALANCE_RECOVERY_ALREADY_ARMED,
+    BALANCE_RECOVERY_REAR_WHEEL_RUNNING
+} BalanceRecoveryResult;
+
 typedef struct
 {
     float rate_kp;
@@ -76,4 +83,5 @@ BalanceTuningResult balance_tuning_set(const char *name,
                                        float *applied_value);
 void balance_tuning_get(BalanceTuningParameters *parameters);
 BalanceTuningResult balance_tuning_revert(void);
+BalanceRecoveryResult balance_odrive_recovery_command(void);
 #endif

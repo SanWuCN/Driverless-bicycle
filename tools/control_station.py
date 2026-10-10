@@ -318,6 +318,7 @@ def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     torque_control_count = sum(bool(value & (1 << 24)) for value in flags)
     odrive_fault_count = sum(bool(value & (1 << 16)) for value in flags)
     odrive_timeout_count = sum(bool(value & (1 << 15)) for value in flags)
+    odrive_recovery_failed_count = sum(bool(value & (1 << 26)) for value in flags)
     count = len(records)
 
     def peak_balance(key: str) -> float:
@@ -337,7 +338,10 @@ def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     current_limits = [float(value["current_lim_a"]) for value in odrives if "current_lim_a" in value]
     current_limit = current_limits[-1] if current_limits else 0.0
     current_saturated = bool(current_limit and current_peak >= current_limit * 0.98)
-    critical = bool(fall_count or odrive_fault_count or odrive_timeout_count)
+    critical = bool(
+        fall_count or odrive_fault_count or odrive_timeout_count or
+        odrive_recovery_failed_count
+    )
     accel_sat_pct = accel_sat_count * 100.0 / count
     velocity_sat_pct = velocity_sat_count * 100.0 / count
     rate_sat_pct = rate_sat_count * 100.0 / count
@@ -395,7 +399,7 @@ def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         {name for balance in balances for name in balance.get("flag_names", []) if name in {
             "BIAS_SAT", "VELOCITY_SAT", "ACCEL_SAT", "ZERO_LIMIT", "ODRIVE_TIMEOUT",
             "ODRIVE_FAULT", "RATE_TARGET_SAT", "FALL_DISARM", "ACCEL_BOOST_120",
-            "SPEED_ENVELOPE", "TORQUE_CONTROL"
+            "SPEED_ENVELOPE", "TORQUE_CONTROL", "ODRIVE_RECOVERY_FAILED"
         }}
     )
     return {
@@ -774,6 +778,7 @@ class ControlStation:
             started = time.monotonic()
             try:
                 axis = device.axis0
+                rear_axis = device.axis1
                 data = {
                     "vbus_v": float(device.vbus_voltage),
                     "ibus_a": float(device.ibus),
@@ -794,6 +799,11 @@ class ControlStation:
                     "vel_ramp_tps2": float(axis.controller.config.vel_ramp_rate),
                     "input_mode": int(axis.controller.config.input_mode),
                     "control_mode": int(axis.controller.config.control_mode),
+                    "axis1_state": int(rear_axis.current_state),
+                    "axis1_error": f"0x{int(rear_axis.error):X}",
+                    "axis1_motor_error": f"0x{int(rear_axis.motor.error):X}",
+                    "axis1_encoder_error": f"0x{int(rear_axis.encoder.error):X}",
+                    "axis1_controller_error": f"0x{int(rear_axis.controller.error):X}",
                 }
                 finished = time.monotonic()
                 data["poll_ms"] = (finished - started) * 1000.0
@@ -874,6 +884,11 @@ class ControlStation:
             "已开启详细 IMU 遥测" if mode == "live" else "已切换为低带宽基础状态",
             "telemetry",
         )
+        return reply
+
+    def recover_odrive(self) -> str:
+        reply = self.send_tuning("ODRIVE", "RECOVER", timeout=1.2)
+        self.add_event("ok", "ODrive Axis 0 恢复流程已请求", "odrive")
         return reply
 
     @staticmethod
@@ -998,6 +1013,20 @@ class ControlStation:
                 raise
             self.send_tuning("DRIVE", "KEEP", wait=False, log_command=False)
             reply = "遥测确认后轮指令已执行（无线回执丢失）"
+        except RuntimeError as error:
+            error_text = str(error)
+            drive_errors = {
+                "DRIVE_BALANCE_NOT_ARMED": "平衡尚未启动，请扶正并等待 2 秒",
+                "DRIVE_AXIS1_NOT_READY": "Axis 1 未进入闭环或反馈超时",
+                "DRIVE_FALL_RECOVERY_PENDING": "跌倒保护恢复尚未完成",
+                "DRIVE_ENCODER_FIRST_FRAME_PENDING": "正在等待后轮编码器首帧",
+                "DRIVE_ALREADY_ACTIVE": "后轮已有运动任务，请先停止",
+                "DRIVE_REAR_WHEEL_MOVING": "后轮尚未停稳",
+            }
+            for code, message in drive_errors.items():
+                if code in error_text:
+                    raise RuntimeError(message) from error
+            raise
         with self.lock:
             self.drive_active = True
             self.drive_target_speed_mps = speed_mps
@@ -1295,6 +1324,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 mode = str(payload.get("mode", ""))
                 reply = self.station.set_telemetry_mode(mode)
                 self._json({"ok": True, "reply": reply, "mode": mode.lower()})
+                return
+            if parsed.path == "/api/odrive":
+                action = str(payload.get("action", ""))
+                if action != "recover":
+                    raise ValueError("未知 ODrive 动作")
+                reply = self.station.recover_odrive()
+                self._json({"ok": True, "reply": reply})
                 return
             if parsed.path == "/api/port":
                 port = str(payload.get("port", ""))
